@@ -1,0 +1,15 @@
+{
+  "name": "yourmove",
+  "description": "Your Move: a free Claude Code mod by Beacon Frontier. A side panel of everything Claude needs from you.",
+  "owner": {
+    "name": "Beacon Frontier",
+    "url": "https://beaconfrontier.com/yourmove"
+  },
+  "plugins": [
+    {
+      "name": "your-move",
+      "source": "./",
+      "description": "A side panel of everything Claude needs from you (decisions, logins, API keys, reviews, answers), kept full while Claude works."
+    }
+  ]
+}
