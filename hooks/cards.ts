@@ -118,11 +118,56 @@ export function cardRows(card: Card, width: number, isOpen: boolean, hasInput: b
         ? card.options.length
         : 0
   }
-  if (card.kind === 'review' || card.kind === 'login' || card.kind === 'key' || card.kind === 'action') rows += 1
-  if (card.kind === 'key') rows += 1
+  if (card.url) rows += 1 /* link line */
+  if (card.kind === 'login' && card.command) rows += 1 /* "runs: !" line */
+  if (card.kind === 'key') rows += 2 /* "put it in" and "never paste" */
   if (hasInput) rows += card.kind === 'text' ? 4 : 3 // the field and its frame
   rows += 1 /* buttons */
   return rows
+}
+
+const URL_IN_TEXT = /(?:https?:\/\/|file:\/\/\/)[^\s<>"']+/gi
+
+/** Splits text into plain and link segments; trailing .,;:) stay in the plain text after the link. */
+export function splitLinks(text: string): Array<{ text: string; url?: string }> {
+  const out: Array<{ text: string; url?: string }> = []
+  let last = 0
+  const plain = (t: string) => {
+    if (!t) return
+    const prev = out[out.length - 1]
+    if (prev && !prev.url) prev.text += t
+    else out.push({ text: t })
+  }
+  for (const m of text.matchAll(URL_IN_TEXT)) {
+    const url = m[0].replace(/[.,;:)]+$/, '')
+    const at = m.index ?? 0
+    plain(text.slice(last, at))
+    if (url.replace(/^(https?:\/\/|file:\/\/\/)/i, '')) out.push({ text: url, url })
+    else plain(url)
+    plain(m[0].slice(url.length))
+    last = at + m[0].length
+  }
+  plain(text.slice(last))
+  return out
+}
+
+/** A plain-text version of a card, for copying. Holds no secret: cards never do. */
+export function cardText(card: Card): string {
+  const lines: string[] = [card.title]
+  if (card.why) lines.push(card.why)
+  if (card.kind === 'decision' || card.kind === 'choice') {
+    for (const o of card.options) {
+      lines.push(`- ${o.label}${o.isRecommended ? ' (recommended)' : ''}`)
+      for (const x of o.pros) lines.push(`  + ${x}`)
+      for (const x of o.risks) lines.push(`  - ${x}`)
+    }
+  }
+  if (card.kind === 'login' && card.command) lines.push(`Run: ! ${card.command}`)
+  if (card.kind === 'key') lines.push(`Put it in ${card.envFile || '.env.local'} as ${card.envVar || 'THE_KEY'}=`)
+  if (card.url && (card.kind === 'login' || card.kind === 'key' || card.kind === 'review' || card.kind === 'action')) {
+    lines.push(`Link: ${card.url}`)
+  }
+  return lines.filter(Boolean).join('\n')
 }
 
 /**

@@ -44,6 +44,7 @@ You're juggling several projects. You come back to a Claude Code session for thi
 - **Looks ahead.** It reads your first ask, the whole chat and the project (open TODOs and TBDs, env vars in `.env.example` that have no value yet, uncommitted work) to ask now what would block Claude later.
 - **Works alongside Claude.** It keeps looking while Claude builds. Answers you give mid-build join the running turn at Claude's next step, so you never wait for the turn to end.
 - **Review links, automatically.** When Claude writes an HTML file, starts a dev server or publishes a preview, a review card appears instantly, without a model call.
+- **Copy anything.** Every link in a card is clickable, with ⧉ copy link beside it. ⧉ copy puts the whole card on your clipboard, options and all.
 - **Fits your screen.** It shows 1, 2, 3, 6, 10 or 20 cards, or fills the panel and stops at the bottom. Clear a card and the next one slides in.
 - **Type or talk.** Every card has a field, and pressing Enter sends your answer to Claude immediately. ◖ speak puts the question in your prompt so you can answer with Claude Code's voice mode or macOS dictation (press fn twice).
 - **Never asks for secrets.** No passwords, codes or key values. It reads env var *names*, never their values, and won't send anything you type that looks like a key.

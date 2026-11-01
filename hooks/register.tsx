@@ -8,6 +8,7 @@ import {
   answersMessage,
   backlogTarget,
   cardRows,
+  cardText,
   fileReviewCard,
   findReviewUrls,
   fit,
@@ -15,6 +16,7 @@ import {
   merge,
   rank,
   reviewCard,
+  splitLinks,
 } from './cards'
 import { scan } from './scan'
 
@@ -373,8 +375,40 @@ export const register: Register = on => {
           />
           </Box>
         ) : null
+      const copyText = async (press: { surface: Parameters<typeof $.ui.copy>[0]['surface'] }, text: string, done: string) => {
+        const res = await $.ui.copy({ text, surface: press.surface })
+        $.ui.toast(res.isCopied ? done : `Couldn't copy. Select the ${text === card.url ? 'link' : 'text'} and copy it instead.`)
+      }
+      const linked = (text: string) =>
+        splitLinks(text).map((seg, i) =>
+          seg.url ? <Link key={`${card.id}:l${i}`} href={seg.url} label={seg.text} /> : seg.text,
+        )
+      const urlLine = () => {
+        const display = card.url.replace(/^file:\/\//, '')
+        return (
+          <Box gap={1} flexWrap="wrap">
+            <Text weight="bold" color="success" underline>
+              <Link href={card.url} label={`➜ ${display}`} />
+            </Text>
+            <Button
+              key={`${card.id}:copyurl`}
+              plain
+              dimColor
+              label="⧉ copy link"
+              onPress={press => void copyText(press, card.url, 'Link copied.')}
+            />
+          </Box>
+        )
+      }
       const tools = (
         <Box gap={1}>
+          <Button
+            key={`${card.id}:copycard`}
+            plain
+            dimColor
+            label="⧉ copy"
+            onPress={press => void copyText(press, cardText(card), 'Card copied.')}
+          />
           <Button key={`${card.id}:mic`} plain dimColor label="◖ speak" onPress={() => void dictate($, card)} />
           <Button key={`${card.id}:later`} plain dimColor label="later" onPress={() => void later($, card)} />
           <Button key={`${card.id}:skip`} plain dimColor label="skip" onPress={() => void skip($, card)} />
@@ -461,7 +495,8 @@ export const register: Register = on => {
       } else if (card.kind === 'login') {
         body = (
           <Box flexDirection="column">
-            <Text dimColor>{card.command ? `runs: ! ${card.command}` : card.url}</Text>
+            {card.command ? <Text dimColor>{`runs: ! ${card.command}`}</Text> : null}
+            {card.url ? urlLine() : null}
             <Box gap={1}>
               <Button
                 key={`${card.id}:go`}
@@ -490,6 +525,7 @@ export const register: Register = on => {
               <Text weight="bold">{card.envVar || 'THE_KEY'}=…</Text>
             </Text>
             <Text dimColor>Never paste the key here. It stays on your machine.</Text>
+            {card.url ? urlLine() : null}
             <Box gap={1}>
               {card.url ? <Button key={`${card.id}:go`} variant="primary" label="⚷ Get key ↗" onPress={() => void openUrl($, card.url)} /> : null}
               {card.envVar ? (
@@ -506,9 +542,7 @@ export const register: Register = on => {
       } else if (card.kind === 'review') {
         body = (
           <Box flexDirection="column">
-            <Text weight="bold" color="success" underline>
-              <Link href={card.url} label={`➜ ${card.url.replace(/^file:\/\//, '')}`} />
-            </Text>
+            {urlLine()}
             <Box gap={1}>
               <Button key={`${card.id}:go`} variant="primary" label="◉ Open ↗" onPress={() => void openUrl($, card.url)} />
               <Button key={`${card.id}:ok`} label="Looks good ✓" onPress={() => void answer($, card, `Reviewed ${card.url}: looks good.`)} />
@@ -517,9 +551,12 @@ export const register: Register = on => {
         )
       } else {
         body = (
-          <Box gap={1}>
-            {card.url ? <Button key={`${card.id}:go`} variant="primary" label="▸ Open ↗" onPress={() => void openUrl($, card.url)} /> : null}
-            <Button key={`${card.id}:ok`} label="Done ✓" onPress={() => void answer($, card, 'Done.')} />
+          <Box flexDirection="column">
+            {card.url ? urlLine() : null}
+            <Box gap={1}>
+              {card.url ? <Button key={`${card.id}:go`} variant="primary" label="▸ Open ↗" onPress={() => void openUrl($, card.url)} /> : null}
+              <Button key={`${card.id}:ok`} label="Done ✓" onPress={() => void answer($, card, 'Done.')} />
+            </Box>
           </Box>
         )
       }
@@ -535,8 +572,8 @@ export const register: Register = on => {
             </Text>
             <Text dimColor>{[card.effort, SOURCE_LABEL[card.source]].filter(Boolean).join(' · ')}</Text>
           </Box>
-          <Text weight="bold">{card.title}</Text>
-          {card.why ? <Text dimColor>{card.why}</Text> : null}
+          <Text weight="bold">{linked(card.title)}</Text>
+          {card.why ? <Text dimColor>{linked(card.why)}</Text> : null}
           {body}
           {Input ? field(card.kind === 'text' ? 2 : 1) : null}
           {tools}
