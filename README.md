@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.png" alt="The Your Move panel beside Claude Code: a blocking database decision with pros and risks, a review card linking to localhost:3000, and an API key card." width="900">
+  <img src="docs/demo.png" alt="The Your Move panel: a review card with an Open link, two pick cards with one-click options, and seven more cards queued." width="480">
 </p>
 
 ---
