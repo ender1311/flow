@@ -4,11 +4,11 @@ import type { Engine } from 'claude-code/testing'
 import { cardRows, cardText, fileReviewCard, findReviewUrls, fit, parseCards, rank, splitLinks } from './cards'
 
 const PANE = {
-  plugin: 'your-move',
+  plugin: 'flow',
   component: 'Pane',
-  requestId: 'your-move',
+  requestId: 'flow',
   props: {
-    title: 'Your Move',
+    title: 'Flow',
     isFocused: false,
     bodyColumns: 50,
     placement: 'dock',
@@ -59,7 +59,7 @@ test('review links are found in dev server and deploy output', () => {
 test('an HTML file Claude writes becomes a review card, on every surface', async ($, on) => {
   mock.clock(on, { now: 1_000_000 })
   mock.store(on)
-  on('command.register', () => ({ value: { command: 'yourmove' } }))
+  on('command.register', () => ({ value: { command: 'flow' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.call', () => ({ result: {} }))

@@ -56,7 +56,7 @@ export type ScanStatus = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'your-move': {
+    'flow': {
       cards: Shaped<Card[]>
       answers: Shaped<Answer[]>
       prefs: Shaped<Prefs>

@@ -1,5 +1,5 @@
-// Your Move: a side panel of everything Claude needs from you, kept full while Claude works.
-// Free from Beacon Frontier (beaconfrontier.com/yourmove).
+// Flow: a side panel of everything Claude needs from you, so you stay in flow while Claude works.
+// Free from Beacon Frontier (beaconfrontier.com/flow).
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
@@ -20,9 +20,9 @@ import {
 } from './cards'
 import { scan } from './scan'
 
-const PANE = 'your-move'
-const HOME = 'https://beaconfrontier.com/yourmove'
-const EMBER = '#d98a5f'
+const PANE = 'flow'
+const HOME = 'https://beaconfrontier.com/flow'
+const TEAL = '#3cc4b4'
 // Typed text is drawn in the terminal's own color: on a dark theme a white field hides it, so the fill is slate.
 const FIELD_DARK = '#34405c'
 const DEFAULT_PREFS: Prefs = { maxCards: 0, scan: 'live', send: 'instant' }
@@ -30,20 +30,20 @@ const LIVE_EVERY_MS = 30_000
 const LIVE_MIN_GAP_MS = 120_000
 const TURN_MIN_GAP_MS = 45_000
 
-const cards = atom({ plugin: 'your-move', key: 'cards' } as const, [] as Card[], { shape: 'cards-1' })
-const answers = atom({ plugin: 'your-move', key: 'answers' } as const, [] as Answer[], { shape: 'answers-1' })
-const prefs = atom({ plugin: 'your-move', key: 'prefs' } as const, DEFAULT_PREFS, { shape: 'prefs-2' })
-const status = atom({ plugin: 'your-move', key: 'status' } as const, { isScanning: false, lastAt: 0, note: '' } as ScanStatus)
-const openCard = atom({ plugin: 'your-move', key: 'openCard' } as const, '')
-const picks = atom({ plugin: 'your-move', key: 'picks' } as const, {} as Record<string, string[]>, { shape: 'picks-1' })
-const showSettings = atom({ plugin: 'your-move', key: 'showSettings' } as const, false)
-const isTurnRunning = atom({ plugin: 'your-move', key: 'isTurnRunning' } as const, false)
-const cleared = atom({ plugin: 'your-move', key: 'cleared' } as const, 0)
-const answered = atom({ plugin: 'your-move', key: 'answered' } as const, [] as string[], { shape: 'answered-1' })
-const skipped = atom({ plugin: 'your-move', key: 'skipped' } as const, [] as string[], { shape: 'skipped-1' })
+const cards = atom({ plugin: 'flow', key: 'cards' } as const, [] as Card[], { shape: 'cards-1' })
+const answers = atom({ plugin: 'flow', key: 'answers' } as const, [] as Answer[], { shape: 'answers-1' })
+const prefs = atom({ plugin: 'flow', key: 'prefs' } as const, DEFAULT_PREFS, { shape: 'prefs-2' })
+const status = atom({ plugin: 'flow', key: 'status' } as const, { isScanning: false, lastAt: 0, note: '' } as ScanStatus)
+const openCard = atom({ plugin: 'flow', key: 'openCard' } as const, '')
+const picks = atom({ plugin: 'flow', key: 'picks' } as const, {} as Record<string, string[]>, { shape: 'picks-1' })
+const showSettings = atom({ plugin: 'flow', key: 'showSettings' } as const, false)
+const isTurnRunning = atom({ plugin: 'flow', key: 'isTurnRunning' } as const, false)
+const cleared = atom({ plugin: 'flow', key: 'cleared' } as const, 0)
+const answered = atom({ plugin: 'flow', key: 'answered' } as const, [] as string[], { shape: 'answered-1' })
+const skipped = atom({ plugin: 'flow', key: 'skipped' } as const, [] as string[], { shape: 'skipped-1' })
 
 const KIND: Record<CardKind, { glyph: string; label: string; color: string }> = {
-  decision: { glyph: '◆', label: 'DECIDE', color: EMBER },
+  decision: { glyph: '◆', label: 'DECIDE', color: TEAL },
   choice: { glyph: '◇', label: 'PICK', color: '#e0b36a' },
   text: { glyph: '✎', label: 'TELL ME', color: 'suggestion' },
   login: { glyph: '⚿', label: 'SIGN IN', color: 'permission' },
@@ -149,7 +149,7 @@ async function answer($: EngineInterface, card: Card, text: string, isTyped = fa
   const reply = text.trim()
   if (!reply) return
   if (LOOKS_LIKE_SECRET.test(reply)) {
-    $.ui.toast('That looks like a key or token. Put it in your .env file instead; Your Move never sends secrets.')
+    $.ui.toast('That looks like a key or token. Put it in your .env file instead; Flow never sends secrets.')
     return
   }
   drafts.delete(card.id)
@@ -189,7 +189,7 @@ async function openUrl($: EngineInterface, url: string): Promise<void> {
 }
 
 async function dictate($: EngineInterface, card: Card): Promise<void> {
-  await $.prompt.fill({ text: `Your Move › ${card.title} [ym:${card.id}] → ` })
+  await $.prompt.fill({ text: `Flow › ${card.title} [flow:${card.id}] → ` })
   $.ui.toast('Speak your answer: Claude Code voice mode, or press fn twice for macOS dictation. Then Enter.')
 }
 
@@ -197,7 +197,7 @@ async function addLive($: EngineInterface, card: Card): Promise<void> {
   const skip = await read($, skipped)
   const before = (await read($, cards)).length
   await update($, cards, q => merge(q, [card], skip))
-  if ((await read($, cards)).length > before) $.ui.toast(`Your Move: ${card.title}`)
+  if ((await read($, cards)).length > before) $.ui.toast(`Flow: ${card.title}`)
 }
 
 export const register: Register = on => {
@@ -207,11 +207,11 @@ export const register: Register = on => {
     const kept = (await $.store.get('prefs-2')) as Partial<Prefs> | undefined
     if (kept && typeof kept === 'object') await update($, prefs, p => ({ ...p, ...kept }))
     await $.command.register({
-      name: 'yourmove',
-      description: 'Your Move: open the panel of what Claude needs from you',
+      name: 'flow',
+      description: 'Flow: open the panel of what Claude needs from you',
       argumentHint: '[scan | send | 1-20 | fit]',
     })
-    void $.ui.open({ id: PANE, title: 'Your Move' })
+    void $.ui.open({ id: PANE, title: 'Flow' })
     if ((await read($, prefs)).send === 'instant') {
       const waiting = await read($, answers)
       if (waiting.length > 0) {
@@ -236,23 +236,23 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'yourmove' }, async ($, e) => {
+  on('command.run', { command: 'flow' }, async ($, e) => {
     const arg = String(e.args ?? '').trim().toLowerCase()
     if (arg === 'scan') {
       void runScan($, 'you asked')
-      return { text: 'Your Move is looking ahead.' }
+      return { text: 'Flow is looking ahead.' }
     }
     if (arg === 'send') {
       await sendAll($)
-      return { text: 'Your Move sent your answers.' }
+      return { text: 'Flow sent your answers.' }
     }
     const n = arg === 'fit' ? 0 : Number.parseInt(arg, 10)
     if (arg && Number.isFinite(n) && n >= 0 && n <= 50) {
       await update($, prefs, p => ({ ...p, maxCards: n }))
       await $.store.set('prefs-2', await read($, prefs)).catch(() => undefined)
     }
-    await $.ui.open({ id: PANE, title: 'Your Move', focus: true })
-    return { text: n === 0 && arg === 'fit' ? 'Your Move fills the pane.' : 'Your Move is open.' }
+    await $.ui.open({ id: PANE, title: 'Flow', focus: true })
+    return { text: n === 0 && arg === 'fit' ? 'Flow fills the pane.' : 'Flow is open.' }
   })
 
   on('turn.start', async ($, e, next) => {
@@ -276,7 +276,7 @@ export const register: Register = on => {
 
   // A spoken or typed answer from the prompt, tagged by the ◖ speak button, clears its card.
   on('prompt.submit', async ($, e, next) => {
-    const tag = /\[ym:([a-z0-9]+)\]/.exec(e.text)
+    const tag = /\[flow:([a-z0-9]+)\]/.exec(e.text)
     if (tag) {
       const id = tag[1]
       await update($, cards, q => q.filter(c => c.id !== id))
@@ -423,7 +423,7 @@ export const register: Register = on => {
               isOpen ? (
                 <Box key={`${card.id}:o${i}`} flexDirection="column">
                   <Text weight="bold">
-                    {o.isRecommended ? <Text color={EMBER}>★ </Text> : '  '}
+                    {o.isRecommended ? <Text color={TEAL}>★ </Text> : '  '}
                     {o.label}
                   </Text>
                   {o.pros.map(x => (
@@ -435,7 +435,7 @@ export const register: Register = on => {
                 </Box>
               ) : (
                 <Text>
-                  {o.isRecommended ? <Text color={EMBER}>★ </Text> : '  '}
+                  {o.isRecommended ? <Text color={TEAL}>★ </Text> : '  '}
                   <Text weight="semibold">{o.label}</Text>
                   {o.pros[0] ? <Text color="success">{`  +${o.pros[0]}`}</Text> : ''}
                   {o.risks[0] ? <Text color="error">{`  −${o.risks[0]}`}</Text> : ''}
@@ -520,7 +520,7 @@ export const register: Register = on => {
           <Box flexDirection="column">
             <Text>
               <Text dimColor>put it in </Text>
-              <Text color={EMBER}>{where}</Text>
+              <Text color={TEAL}>{where}</Text>
               <Text dimColor> as </Text>
               <Text weight="bold">{card.envVar || 'THE_KEY'}=…</Text>
             </Text>
@@ -593,7 +593,7 @@ export const register: Register = on => {
       <Box flexDirection="column" width={width}>
         <Box justifyContent="space-between">
           <Text>
-            <Text color={EMBER} weight="bold">▲ YOUR MOVE</Text>
+            <Text color={TEAL} weight="bold">≈ FLOW</Text>
             <Text dimColor>{count === 0 ? '  · all clear' : `  · ${count} need${count === 1 ? 's' : ''} you`}</Text>
             {blocking > 0 ? <Text color="error" weight="bold">{` · ${blocking} blocking`}</Text> : null}
           </Text>
@@ -641,7 +641,7 @@ export const register: Register = on => {
         <Box flexDirection="column" marginTop={1}>
           {shown.length === 0 ? (
             <Box flexDirection="column" alignItems="center" paddingY={1}>
-              <Text color={EMBER}>·  ✦  ·</Text>
+              <Text color={TEAL}>·  ✦  ·</Text>
               <Text weight="bold">All clear. Nothing needs you.</Text>
               <Text dimColor>{st.isScanning ? 'Looking ahead for what is next…' : 'Claude has what it needs for now.'}</Text>
               {done > 0 ? <Text dimColor>{`You cleared ${done} this session.`}</Text> : null}

@@ -37,7 +37,7 @@ Card kinds:
 Rules:
 - Never ask for a password, a one-time code or a secret's value.
 - Only what is really needed and not yet answered. No busywork, no "anything else?".
-- Anything the person already answered or decided anywhere in the conversation (including "Your Move: … answers from the side panel" messages) is settled: never ask it again, not even reworded.
+- Anything the person already answered or decided anywhere in the conversation (including "Flow: … answers from the side panel" messages) is settled: never ask it again, not even reworded.
 - Do not ask about things already done in the conversation.
 - Most blocking first. At most ${limit} cards. Fewer is fine. Zero is fine: {"cards":[]}.
 - Plain, short words. No competitor names. No markdown.
@@ -100,7 +100,7 @@ export async function scan($: EngineInterface, limit: number, known: readonly st
   const now = await $.clock.now()
   const ask = instructions(limit, known, digest)
   const fork = await $.model.fork({
-    prompt: `[Your Move side-panel scan. This is not the person talking and not a turn: do not continue the task, call no tools.]\n\n${ask}`,
+    prompt: `[Flow side-panel scan. This is not the person talking and not a turn: do not continue the task, call no tools.]\n\n${ask}`,
   })
   if (fork.isAnswered) {
     const cards = parseCards(fork.text, now)

@@ -2,15 +2,15 @@
   <img src=".claude-plugin/icon.png" width="96" height="96" alt="">
 </p>
 
-<h1 align="center">Your Move</h1>
+<h1 align="center">Flow</h1>
 
 <p align="center">
-  <strong>Claude did its part. Your move.</strong><br>
+  <strong>Claude keeps building. You stay in flow.</strong><br>
   A free side panel for Claude Code that shows everything Claude needs from you, at a glance.
 </p>
 
 <p align="center">
-  <a href="https://beaconfrontier.com/yourmove"><strong>▶ Try the live demo</strong></a>
+  <a href="https://beaconfrontier.com/flow"><strong>▶ Try the live demo</strong></a>
   &nbsp;·&nbsp;
   <a href="#install">Install</a>
   &nbsp;·&nbsp;
@@ -18,14 +18,14 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.png" alt="The Your Move panel: a review card with an Open link, two pick cards with one-click options, and seven more cards queued." width="480">
+  <img src="docs/demo.png" alt="The Flow panel: a review card with an Open link, two pick cards with one-click options, and seven more cards queued." width="480">
 </p>
 
 ---
 
 You're juggling several projects. You come back to a Claude Code session for thirty seconds. What does Claude need from you?
 
-**Your Move answers that in one glance.** It reads your first request, the chat so far and the project itself, then fills a panel beside the chat with cards: decisions to make, accounts to sign in to, keys to fetch, things to review. Each card has the buttons to handle it in a click and a field to type your answer. Claude picks up your answer right away, even mid-build.
+**Flow answers that in one glance.** It reads your first request, the chat so far and the project itself, then fills a panel beside the chat with cards: decisions to make, accounts to sign in to, keys to fetch, things to review. Each card has the buttons to handle it in a click and a field to type your answer. Claude picks up your answer right away, even mid-build.
 
 ## Seven kinds of asks
 
@@ -54,7 +54,7 @@ You're juggling several projects. You come back to a Claude Code session for thi
 At the prompt of a Claude Code terminal session:
 
 ```
-/plugin install your-move --marketplace ender1311/yourMove
+/plugin install flow --marketplace ender1311/flow
 ```
 
 Answer `y` to add the marketplace, then press Enter to install it for your user.
@@ -62,19 +62,19 @@ Answer `y` to add the marketplace, then press Enter to install it for your user.
 From a shell:
 
 ```
-claude plugin install your-move --marketplace ender1311/yourMove
+claude plugin install flow --marketplace ender1311/flow
 ```
 
-In the Claude desktop app, where `/plugin` doesn't run: click **+** next to the prompt box, then **Plugins**, then **Add marketplace** with `ender1311/yourMove`, then **Add plugin**.
+In the Claude desktop app, where `/plugin` doesn't run: click **+** next to the prompt box, then **Plugins**, then **Add marketplace** with `ender1311/flow`, then **Add plugin**.
 
 ## Use
 
 | Command | What it does |
 | --- | --- |
-| `/yourmove` | Opens the panel (in fullscreen it docks on the right by itself) |
-| `/yourmove 6` | Shows at most 6 cards. `/yourmove fit` fills the panel |
-| `/yourmove scan` | Looks ahead now |
-| `/yourmove send` | Sends any answers you batched |
+| `/flow` | Opens the panel (in fullscreen it docks on the right by itself) |
+| `/flow 6` | Shows at most 6 cards. `/flow fit` fills the panel |
+| `/flow scan` | Looks ahead now |
+| `/flow send` | Sends any answers you batched |
 
 ⚙ in the panel sets how many cards show, when it looks ahead (**while working**, **after turns**, or **only ↻**), and whether button answers go one at a time or as a batch. Typed answers always go the moment you press Enter.
 
@@ -86,8 +86,12 @@ In the Claude desktop app, where `/plugin` doesn't run: click **+** next to the 
 
 **Where does it work?** In the Claude Code terminal and the Claude desktop app. The mobile app shows the cards with their buttons; it doesn't have text fields yet.
 
+## Brand
+
+The icon is three flowing waves (cream `#f5f0e8`, teal `#3cc4b4`, sky `#6fb7e8`) on navy `#1e2a44`. The primary color is teal `#3cc4b4` on dark backgrounds and `#0f7a70` on light backgrounds.
+
 ## Free, and staying free
 
-Your Move is made by [Beacon Frontier](https://beaconfrontier.com). If it saves you a few context switches a day, [buy Dan a coffee](https://buy.stripe.com/4gMcN52qI3gQeppbsUcjS03). It keeps the next one coming.
+Flow is made by [Beacon Frontier](https://beaconfrontier.com). If it saves you a few context switches a day, [buy Dan a coffee](https://buy.stripe.com/4gMcN52qI3gQeppbsUcjS03). It keeps the next one coming.
 
 MIT licensed.

@@ -1,4 +1,4 @@
-// Pure logic for Your Move: no `$`, so the tests can call it directly.
+// Pure logic for Flow: no `$`, so the tests can call it directly.
 import type { Answer, Card, CardKind, CardOption, Urgency } from '../types'
 
 const KINDS: readonly CardKind[] = ['decision', 'choice', 'text', 'login', 'key', 'review', 'action']
@@ -260,7 +260,7 @@ export function fileReviewCard(path: string, now: number): Card {
 export function answersMessage(answers: readonly Answer[]): string {
   const lines = answers.map((a, i) => `${i + 1}. ${a.title}\n   → ${a.text}`)
   return [
-    `Your Move: ${answers.length === 1 ? 'an answer' : `${answers.length} answers`} from the side panel.`,
+    `Flow: ${answers.length === 1 ? 'an answer' : `${answers.length} answers`} from the side panel.`,
     '',
     ...lines,
     '',

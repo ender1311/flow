@@ -1,5 +1,5 @@
 {
-  "name": "your-move",
+  "name": "flow",
   "private": true,
   "scripts": {
     "check": "CC=\"${CLAUDE_CODE_EXECPATH:-claude}\"; [ -x /opt/homebrew/bin/claude ] && [ -z \"$CLAUDE_CODE_EXECPATH\" ] && CC=/opt/homebrew/bin/claude; \"$CC\" plugin validate . && \"$CC\" plugin test . && npx -y -p typescript@5.6.3 tsc --noEmit -p ."

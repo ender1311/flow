@@ -1,9 +1,9 @@
 {
-  "name": "your-move",
+  "name": "flow",
   "version": "0.1.0",
-  "description": "A side panel of everything Claude needs from you (decisions, logins, API keys, reviews, answers), kept full while Claude works.",
-  "author": { "name": "Beacon Frontier", "url": "https://beaconfrontier.com/yourmove" },
-  "homepage": "https://beaconfrontier.com/yourmove",
+  "description": "Flow: a side panel of everything Claude needs from you (decisions, logins, API keys, reviews, answers), so you stay in flow while Claude works.",
+  "author": { "name": "Beacon Frontier", "url": "https://beaconfrontier.com/flow" },
+  "homepage": "https://beaconfrontier.com/flow",
   "license": "MIT",
   "types": "./types/index.d.ts"
 }
