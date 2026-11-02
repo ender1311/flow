@@ -376,10 +376,16 @@ test('links, ids, paths and slugs are not secrets', () => {
     'skills-directory-for-claude-code-plugins',
     'the primary key = customer_id',
     'yes, ship it',
+    // Any https link goes through whole, whatever it carries (Dan, 2026-11-02).
+    j('https://hooks.slack.com/', 'services/T000/B000/', RAND),
+    j('https://api.example.com/v1/data?', 'api_key=', 'abcd1234efgh5678'),
+    j('https://example.com/cb?token=', RAND),
+    j('https://admin:', 'hunter2hunter2', '@example.com/'),
+    j('see https://example.com/', RAND, ' for details'),
   ]) expect(looksLikeSecret(ok), ok).toBe(false)
 })
 
-test('keys and tokens are secrets, even inside a link or an assignment', () => {
+test('keys and tokens outside https links are secrets', () => {
   for (const bad of [
     j('sk-', 'ant-api03-', RAND),
     j('sk', '_live_', RAND),
@@ -393,8 +399,9 @@ test('keys and tokens are secrets, even inside a link or an assignment', () => {
     j('-----BEGIN ', 'PRIVATE KEY-----'),
     j('STRIPE_SECRET_KEY', '=', 'abcdef123456'),
     j('postgres://admin:', 'hunter2hunter2', '@db.example.com/app'),
-    j('https://hooks.slack.com/', 'services/T000/B000/', RAND),
-    j('https://api.example.com/v1/data?', 'api_key=', 'abcd1234efgh5678'),
+    j('redis://:', 'hunter2hunter2', '@cache.example.com:6379'),
+    j('http://admin:', 'hunter2hunter2', '@example.com/'),
+    j('https://example.com/docs and the key ', j('sk', '_live_', RAND)),
     RAND,
     j('here it is ', RAND, ' thanks'),
   ]) expect(looksLikeSecret(bad), bad.slice(0, 12)).toBe(true)

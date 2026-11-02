@@ -288,11 +288,14 @@ export function envNames(text: string): string[] {
 }
 
 // ---- secrets in typed answers ----
-// A typed answer that holds a key or token is held back (it belongs in the env file). Links, ids, paths and slugs are
-// everyday answers and must pass: only key formats, secrets carried inside a link, `NAME_KEY=value` lines, and long
-// random-looking runs count.
+// A typed answer that holds a key or token is held back (it belongs in the env file). Any https:// link always goes
+// through as it is (Dan, 2026-11-02): links are everyday answers. The rest of the answer is checked for key formats,
+// other links that carry a password (postgres://user:pass@…), `NAME_KEY=value` lines, and long random-looking runs.
 
-/** Known key formats. Matched anywhere, so a key inside a link is still caught. */
+/** An https link, taken whole: never judged. */
+const HTTPS_URL = /\bhttps:\/\/[^\s"'<>]+/gi
+
+/** Known key formats. */
 const KEY_FORMATS: readonly RegExp[] = [
   /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}/, // Anthropic, OpenAI
   /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/, // Stripe
@@ -313,15 +316,11 @@ const KEY_FORMATS: readonly RegExp[] = [
 /** `STRIPE_SECRET_KEY=…`, `password=…`: an env-style assignment of a secret-named variable. */
 const SECRET_ASSIGNMENT = /\b[A-Za-z0-9_]*(?:key|token|secret|password|passwd|pwd)=\S{8,}/i
 
-/** Any link (`https://…`, `postgres://…`, `file://…`). */
-const ANY_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi
+/** A non-https link with a password before the host: `postgres://user:pass@host`, `redis://:pass@host`. */
+const URL_WITH_PASSWORD = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]*:[^\s/@]+@/i
 
-/** A link that carries a secret: a password before the host, a secret-named query value, or a webhook address. */
-function urlHoldsSecret(url: string): boolean {
-  if (/^[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i.test(url)) return true
-  if (/[?&#](?:[a-z0-9_]*(?:token|secret|password|passwd|api[_-]?key|apikey|signature|sig|auth)|key)=[^&#\s]{8,}/i.test(url)) return true
-  return /\/\/(?:hooks\.slack\.com\/services|(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks)\//i.test(url)
-}
+/** Any other link (`postgres://…`, `file://…`): ids in a path are not secrets. */
+const ANY_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi
 
 /**
  * Random-looking: a piece of 20+ characters (between `-`, `_`, `.` and `/`) mixing capitals, lowercase and digits.
@@ -336,11 +335,9 @@ function looksRandom(text: string): boolean {
   return false
 }
 
-/** Whether a typed answer holds a key, token or password. */
+/** Whether a typed answer holds a key, token or password. https links are never counted. */
 export function looksLikeSecret(text: string): boolean {
-  if (KEY_FORMATS.some(re => re.test(text)) || SECRET_ASSIGNMENT.test(text)) return true
-  const urls = text.match(ANY_URL) ?? []
-  if (urls.some(urlHoldsSecret)) return true
-  // Ids inside an ordinary link (a Google Doc, a Notion page) are not secrets: judge only the text around links.
-  return looksRandom(text.replace(ANY_URL, ' '))
+  const rest = text.replace(HTTPS_URL, ' ')
+  if (KEY_FORMATS.some(re => re.test(rest)) || SECRET_ASSIGNMENT.test(rest) || URL_WITH_PASSWORD.test(rest)) return true
+  return looksRandom(rest.replace(ANY_URL, ' '))
 }
