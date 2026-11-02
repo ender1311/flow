@@ -253,3 +253,104 @@ test('cardRows matches the rows each card kind draws (hand-counted, the test API
   expect(cardRows(mk({ kind: 'decision', options }), 50, false, false)).toBe(7)
   expect(cardRows(mk({ kind: 'decision', options }), 50, true, false)).toBe(5 + 3 + 1)
 })
+
+// ---- stop / continue ----
+
+const flowCmd = ($: Engine, args: string) =>
+  $.command.run({ command: 'flow', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+const flush = () =>
+  new Promise<void>(r => (globalThis as unknown as { setTimeout: (f: () => void, ms: number) => void }).setTimeout(r, 30))
+
+let modelCalls: string[] = []
+let release: (() => void) | undefined
+let gate = false
+
+async function setupStop($: Engine, on: Parameters<typeof mock.store>[0], opts: { gate?: boolean } = {}) {
+  modelCalls = []
+  release = undefined
+  gate = opts.gate ?? false
+  mock.clock(on, { now: 1_000_000 })
+  mock.store(on)
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('model.fork', async () => {
+    modelCalls.push('fork')
+    if (gate) await new Promise<void>(r => (release = r))
+    return { value: { isAnswered: true, text: JSON.stringify({ cards: gate ? linkCards : [] }) } } as never
+  })
+  on('model.complete', () => {
+    modelCalls.push('complete')
+    return { value: { isAnswered: true, text: '{"cards":[]}' } } as never
+  })
+  on('command.register', () => ({ value: { command: 'flow' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', () => ({ result: {} }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  return toasts
+}
+
+test('stopped: a Write is held, not shown; continue brings it onto the panel', async ($, on) => {
+  const toasts = await setupStop($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'stop' })
+  expect(toasts).toContain('Flow stopped: no new cards until you continue.')
+  expect(await ui.find({ type: 'Button', text: '▶ continue' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '■ stopped · no new cards until you continue' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'scan' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Press ▶ continue for new cards/ })).toBeDefined()
+
+  const before = toasts.length
+  await $.tool.call({ tool: 'Write', file_path: '/work/held.html', content: 'x' })
+  expect(toasts.length).toBe(before)
+  expect(await ui.find({ type: 'Text', text: /Review held\.html/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', text: '▶ continue · 1 held' })).toBeDefined()
+
+  await ui.press({ key: 'stop' })
+  expect(toasts).toContain('Flow continued. · 1 card came in')
+  await flush()
+  expect(await ui.find({ type: 'Text', text: /Review held\.html/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /■ stop/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /held/ })).toBeUndefined()
+  await $.tool.call({ tool: 'Write', file_path: '/work/after.html', content: 'x' })
+  expect(await ui.find({ type: 'Text', text: /Review after\.html/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('/flow scan while stopped does not call the model; /flow continue works', async ($, on) => {
+  await setupStop($, on)
+  const stop = await flowCmd($, 'stop')
+  expect(stop.text).toBe('Flow stopped. /flow continue starts it again.')
+  const scanned = await flowCmd($, 'scan')
+  expect(scanned.text).toBe('Flow is stopped. /flow continue starts it again.')
+  expect(modelCalls).toEqual([])
+  const cont = await flowCmd($, 'continue')
+  expect(cont.text).toBe('Flow continued.')
+  await flush()
+  expect(modelCalls[0]).toBe('fork') // continue starts a fresh scan at once
+})
+
+test('the stopped flag survives a new session', async ($, on) => {
+  await setupStop($, on)
+  await flowCmd($, 'stop')
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Button', text: '▶ continue' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a scan in flight when Stop is pressed adds no cards', async ($, on) => {
+  await setupStop($, on, { gate: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'scan' })
+  expect(modelCalls).toEqual(['fork'])
+  await flowCmd($, 'stop')
+  release?.()
+  await flush()
+  expect(await ui.find({ type: 'Text', text: /Postgres or SQLite/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Sign in to Vercel/ })).toBeUndefined()
+  await ui.unmount()
+})

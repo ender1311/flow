@@ -46,6 +46,8 @@ export type Prefs = {
   scan: 'live' | 'turn' | 'manual'
   /** `batch` waits for Send; `instant` hands each answer over as it is given. */
   send: 'batch' | 'instant'
+  /** Stopped: no scans and no new live cards until the person continues. */
+  isStopped: boolean
 }
 
 export type ScanStatus = {
@@ -60,6 +62,8 @@ declare module 'claude-code' {
       cards: Shaped<Card[]>
       answers: Shaped<Answer[]>
       prefs: Shaped<Prefs>
+      /** Live cards that came in while stopped, shown on continue. */
+      held: Shaped<Card[]>
       status: ScanStatus
       openCard: string
       picks: Shaped<Record<string, string[]>>

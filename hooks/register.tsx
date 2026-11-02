@@ -25,7 +25,7 @@ const HOME = 'https://beaconfrontier.com/flow'
 const TEAL = '#3cc4b4'
 // Typed text is drawn in the terminal's own color: on a dark theme a white field hides it, so the fill is slate.
 const FIELD_DARK = '#34405c'
-const DEFAULT_PREFS: Prefs = { maxCards: 0, scan: 'live', send: 'instant' }
+const DEFAULT_PREFS: Prefs = { maxCards: 0, scan: 'live', send: 'instant', isStopped: false }
 const LIVE_EVERY_MS = 30_000
 const LIVE_MIN_GAP_MS = 120_000
 const TURN_MIN_GAP_MS = 45_000
@@ -40,6 +40,7 @@ const showSettings = atom({ plugin: 'flow', key: 'showSettings' } as const, fals
 const isTurnRunning = atom({ plugin: 'flow', key: 'isTurnRunning' } as const, false)
 const cleared = atom({ plugin: 'flow', key: 'cleared' } as const, 0)
 const answered = atom({ plugin: 'flow', key: 'answered' } as const, [] as string[], { shape: 'answered-1' })
+const held = atom({ plugin: 'flow', key: 'held' } as const, [] as Card[], { shape: 'held-1' })
 const skipped = atom({ plugin: 'flow', key: 'skipped' } as const, [] as string[], { shape: 'skipped-1' })
 
 const KIND: Record<CardKind, { glyph: string; label: string; color: string }> = {
@@ -87,16 +88,23 @@ function ago(ms: number): string {
 // Module state that may reset on a hot reload: a scan counter and unsent typing.
 let toolsSinceScan = 0
 const drafts = new Map<string, string>()
+// Stop bumps the epoch and aborts the running scan: a fork cannot be aborted, so a late result is dropped by epoch.
+let scanEpoch = 0
+let scanAbort: AbortController | undefined
 
 // ---------- scanning ----------
 
 async function runScan($: EngineInterface, why: string): Promise<void> {
+  if ((await read($, prefs)).isStopped) return
   const st = await read($, status)
   const startedAt = await $.clock.now()
   // A scan left "running" by a reload mid-scan counts as over after 3 minutes.
   if (st.isScanning && startedAt - st.lastAt < 180_000) return
   await update($, status, () => ({ isScanning: true, lastAt: startedAt, note: why }))
   toolsSinceScan = 0
+  const epoch = scanEpoch
+  const controller = new AbortController()
+  scanAbort = controller
   try {
     const p = await read($, prefs)
     const queue = await read($, cards)
@@ -109,11 +117,14 @@ async function runScan($: EngineInterface, why: string): Promise<void> {
     }
     const done = [...(await read($, answered)), ...(await read($, answers)).map(a => a.title)]
     const known = [...queue.map(c => c.title), ...done].slice(-80)
-    const found = await scan($, Math.min(8, room), known)
+    const found = await scan($, Math.min(8, room), known, controller.signal)
+    // Stopped while this scan ran: its results and its status write are dropped.
+    if (epoch !== scanEpoch || (await read($, prefs)).isStopped) return
     await update($, cards, q => merge(q, found.cards, skip))
     const at = await $.clock.now()
     await update($, status, () => ({ isScanning: false, lastAt: at, note: found.note }))
   } catch (err) {
+    if (epoch !== scanEpoch) return
     const at = await $.clock.now()
     await update($, status, () => ({
       isScanning: false,
@@ -193,7 +204,45 @@ async function dictate($: EngineInterface, card: Card): Promise<void> {
   $.ui.toast('Speak your answer: Claude Code voice mode, or press fn twice for macOS dictation. Then Enter.')
 }
 
+async function savePrefs($: EngineInterface, change: Partial<Prefs>): Promise<void> {
+  await update($, prefs, cur => ({ ...cur, ...change }))
+  // Kept for the next session too; the panel works the same if this fails.
+  await $.store.set('prefs-2', await read($, prefs)).catch(() => undefined)
+}
+
+/** Stop everything new: scans, live cards. Cards already on the panel stay and can be answered. */
+async function stopFlow($: EngineInterface): Promise<void> {
+  scanEpoch += 1
+  scanAbort?.abort()
+  scanAbort = undefined
+  await savePrefs($, { isStopped: true })
+  const at = await $.clock.now()
+  await update($, status, () => ({ isScanning: false, lastAt: at, note: 'stopped' }))
+  $.ui.toast('Flow stopped: no new cards until you continue.')
+}
+
+async function continueFlow($: EngineInterface): Promise<void> {
+  await savePrefs($, { isStopped: false })
+  const waiting = await read($, held)
+  const skip = await read($, skipped)
+  const before = (await read($, cards)).length
+  if (waiting.length > 0) {
+    await update($, cards, q => merge(q, waiting, skip))
+    await update($, held, () => [])
+  }
+  const came = (await read($, cards)).length - before
+  const at = await $.clock.now()
+  await update($, status, s => ({ ...s, isScanning: false, lastAt: at, note: 'continued' }))
+  $.ui.toast(`Flow continued.${came > 0 ? ` · ${came} card${came === 1 ? '' : 's'} came in` : ''}`)
+  if ((await read($, prefs)).scan !== 'manual') void runScan($, 'continued')
+}
+
 async function addLive($: EngineInterface, card: Card): Promise<void> {
+  if ((await read($, prefs)).isStopped) {
+    // Real links Claude made: kept for when the person continues.
+    await update($, held, h => (h.some(c => c.id === card.id) ? h : [...h, card].slice(-20)))
+    return
+  }
   const skip = await read($, skipped)
   const before = (await read($, cards)).length
   await update($, cards, q => merge(q, [card], skip))
@@ -209,7 +258,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'flow',
       description: 'Flow: open the panel of what Claude needs from you',
-      argumentHint: '[scan | send | 1-20 | fit]',
+      argumentHint: '[scan | send | stop | continue | 1-20 | fit]',
     })
     void $.ui.open({ id: PANE, title: 'Flow' })
     if ((await read($, prefs)).send === 'instant') {
@@ -238,7 +287,16 @@ export const register: Register = on => {
 
   on('command.run', { command: 'flow' }, async ($, e) => {
     const arg = String(e.args ?? '').trim().toLowerCase()
+    if (arg === 'stop') {
+      await stopFlow($)
+      return { text: 'Flow stopped. /flow continue starts it again.' }
+    }
+    if (arg === 'continue' || arg === 'resume' || arg === 'start') {
+      await continueFlow($)
+      return { text: 'Flow continued.' }
+    }
     if (arg === 'scan') {
+      if ((await read($, prefs)).isStopped) return { text: 'Flow is stopped. /flow continue starts it again.' }
       void runScan($, 'you asked')
       return { text: 'Flow is looking ahead.' }
     }
@@ -342,11 +400,8 @@ export const register: Register = on => {
     const { shown, waiting } = fit(queue, p.maxCards, room, c => cardRows(c, width, c.id === open, Input !== undefined))
     const blocking = queue.filter(c => c.urgency === 'blocking').length
 
-    const setPrefs = async (change: Partial<Prefs>) => {
-      await update($, prefs, cur => ({ ...cur, ...change }))
-      // Kept for the next session too; the panel works the same if this fails.
-      await $.store.set('prefs-2', await read($, prefs)).catch(() => undefined)
-    }
+    const heldCards = await read($, held)
+    const setPrefs = (change: Partial<Prefs>) => savePrefs($, change)
 
     // --- one card ---
     const drawCard = (card: Card) => {
@@ -583,7 +638,9 @@ export const register: Register = on => {
 
     // --- the pane ---
     const beacon = st.isScanning ? '◌' : busy ? '◍' : '●'
-    const statusLine = st.isScanning
+    const statusLine = p.isStopped
+      ? '■ stopped · no new cards until you continue'
+      : st.isScanning
       ? `${beacon} looking ahead…`
       : `${beacon} ${st.lastAt ? `looked ${ago(now - st.lastAt)}` : 'warming up'}${st.note ? ` · ${st.note}` : ''}`
     const count = queue.length
@@ -598,7 +655,12 @@ export const register: Register = on => {
             {blocking > 0 ? <Text color="error" weight="bold">{` · ${blocking} blocking`}</Text> : null}
           </Text>
           <Box gap={1}>
-            <Button key="scan" plain dimColor label="↻" onPress={() => void runScan($, 'you asked')} />
+            {p.isStopped ? (
+              <Button key="stop" variant="primary" label={heldCards.length > 0 ? `▶ continue · ${heldCards.length} held` : '▶ continue'} onPress={() => void continueFlow($)} />
+            ) : (
+              <Button key="stop" plain dimColor label="■ stop" onPress={() => void stopFlow($)} />
+            )}
+            {p.isStopped ? null : <Button key="scan" plain dimColor label="↻" onPress={() => void runScan($, 'you asked')} />}
             <Button key="gear" plain dimColor label="⚙" onPress={() => void update($, showSettings, v => !v)} />
           </Box>
         </Box>
@@ -643,7 +705,9 @@ export const register: Register = on => {
             <Box flexDirection="column" alignItems="center" paddingY={1}>
               <Text color={TEAL}>·  ✦  ·</Text>
               <Text weight="bold">All clear. Nothing needs you.</Text>
-              <Text dimColor>{st.isScanning ? 'Looking ahead for what is next…' : 'Claude has what it needs for now.'}</Text>
+              <Text dimColor>
+                {p.isStopped ? 'Flow is stopped. Press ▶ continue for new cards.' : st.isScanning ? 'Looking ahead for what is next…' : 'Claude has what it needs for now.'}
+              </Text>
               {done > 0 ? <Text dimColor>{`You cleared ${done} this session.`}</Text> : null}
             </Box>
           ) : (

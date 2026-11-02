@@ -95,7 +95,7 @@ export type ScanOutcome = { cards: Card[]; note: string }
  * (the main thread's cached prefix, so it is cheap and sees the whole chat);
  * before the first turn, asks over the project alone.
  */
-export async function scan($: EngineInterface, limit: number, known: readonly string[]): Promise<ScanOutcome> {
+export async function scan($: EngineInterface, limit: number, known: readonly string[], signal?: AbortSignal): Promise<ScanOutcome> {
   const digest = await projectDigest($)
   const now = await $.clock.now()
   const ask = instructions(limit, known, digest)
@@ -113,7 +113,7 @@ export async function scan($: EngineInterface, limit: number, known: readonly st
     maxTokens: 2500,
     system: 'You audit a software project for the things its owner must supply before an AI coding assistant can finish the work. You reply with JSON only.',
     prompt: ask,
-  })
+  }, signal ? { signal } : undefined)
   if (!solo.isAnswered) return { cards: [], note: `scan failed (${solo.reason})` }
   const cards = parseCards(solo.text, now)
   return { cards, note: cards.length > 0 ? `found ${cards.length} in the project` : 'nothing new' }
