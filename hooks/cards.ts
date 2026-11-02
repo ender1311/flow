@@ -286,3 +286,61 @@ export function envNames(text: string): string[] {
   }
   return names
 }
+
+// ---- secrets in typed answers ----
+// A typed answer that holds a key or token is held back (it belongs in the env file). Links, ids, paths and slugs are
+// everyday answers and must pass: only key formats, secrets carried inside a link, `NAME_KEY=value` lines, and long
+// random-looking runs count.
+
+/** Known key formats. Matched anywhere, so a key inside a link is still caught. */
+const KEY_FORMATS: readonly RegExp[] = [
+  /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}/, // Anthropic, OpenAI
+  /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/, // Stripe
+  /\bwhsec_[A-Za-z0-9+/=]{16,}/, // webhook signing secrets
+  /\bgh[pousr]_[A-Za-z0-9]{30,}/, // GitHub tokens
+  /\bgithub_pat_[A-Za-z0-9_]{40,}/,
+  /\bglpat-[A-Za-z0-9_-]{20,}/, // GitLab
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/, // Slack
+  /\bAKIA[0-9A-Z]{16}\b/, // AWS access key id
+  /\bAIza[0-9A-Za-z_-]{35}/, // Google API key
+  /\bre_[A-Za-z0-9]{8,}_[A-Za-z0-9]{16,}/, // Resend
+  /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/, // SendGrid
+  /\bnpm_[A-Za-z0-9]{36}\b/,
+  /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, // JWT
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+]
+
+/** `STRIPE_SECRET_KEY=…`, `password=…`: an env-style assignment of a secret-named variable. */
+const SECRET_ASSIGNMENT = /\b[A-Za-z0-9_]*(?:key|token|secret|password|passwd|pwd)=\S{8,}/i
+
+/** Any link (`https://…`, `postgres://…`, `file://…`). */
+const ANY_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi
+
+/** A link that carries a secret: a password before the host, a secret-named query value, or a webhook address. */
+function urlHoldsSecret(url: string): boolean {
+  if (/^[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i.test(url)) return true
+  if (/[?&#](?:[a-z0-9_]*(?:token|secret|password|passwd|api[_-]?key|apikey|signature|sig|auth)|key)=[^&#\s]{8,}/i.test(url)) return true
+  return /\/\/(?:hooks\.slack\.com\/services|(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks)\//i.test(url)
+}
+
+/**
+ * Random-looking: a piece of 20+ characters (between `-`, `_`, `.` and `/`) mixing capitals, lowercase and digits.
+ * Words, slugs, lowercase hex ids (git hashes, UUIDs, Notion ids) and paths don't mix all three, so they pass.
+ */
+function looksRandom(text: string): boolean {
+  for (const run of text.match(/[A-Za-z0-9+/=_.-]{20,}/g) ?? []) {
+    for (const piece of run.split(/[-_./]/)) {
+      if (piece.length >= 20 && /[A-Z]/.test(piece) && /[a-z]/.test(piece) && /\d/.test(piece)) return true
+    }
+  }
+  return false
+}
+
+/** Whether a typed answer holds a key, token or password. */
+export function looksLikeSecret(text: string): boolean {
+  if (KEY_FORMATS.some(re => re.test(text)) || SECRET_ASSIGNMENT.test(text)) return true
+  const urls = text.match(ANY_URL) ?? []
+  if (urls.some(urlHoldsSecret)) return true
+  // Ids inside an ordinary link (a Google Doc, a Notion page) are not secrets: judge only the text around links.
+  return looksRandom(text.replace(ANY_URL, ' '))
+}

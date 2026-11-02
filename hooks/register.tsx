@@ -13,6 +13,7 @@ import {
   findReviewUrls,
   fit,
   isReviewableFile,
+  looksLikeSecret,
   merge,
   rank,
   reviewCard,
@@ -63,8 +64,6 @@ const PLACEHOLDER: Record<CardKind, string> = {
   action: 'A note, or how it went',
 }
 
-// A typed answer that looks like a secret is held back: it belongs in the env file.
-const LOOKS_LIKE_SECRET = /\b(sk|pk|rk|ghp|gho|github_pat|xox[abp]|AKIA|AIza|re)_?[A-Za-z0-9_-]{16,}|\b[A-Za-z0-9_-]{32,}\b/
 
 const SOURCE_LABEL: Record<Card['source'], string> = {
   prompt: 'from your ask',
@@ -159,7 +158,7 @@ async function sendAll($: EngineInterface): Promise<void> {
 async function answer($: EngineInterface, card: Card, text: string, isTyped = false): Promise<void> {
   const reply = text.trim()
   if (!reply) return
-  if (LOOKS_LIKE_SECRET.test(reply)) {
+  if (looksLikeSecret(reply)) {
     $.ui.toast('That looks like a key or token. Put it in your .env file instead; Flow never sends secrets.')
     return
   }

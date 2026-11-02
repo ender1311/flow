@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { cardRows, cardText, fileReviewCard, findReviewUrls, fit, parseCards, rank, splitLinks } from './cards'
+import { cardRows, cardText, fileReviewCard, findReviewUrls, fit, looksLikeSecret, parseCards, rank, splitLinks } from './cards'
 
 const PANE = {
   plugin: 'flow',
@@ -353,4 +353,49 @@ test('a scan in flight when Stop is pressed adds no cards', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /Postgres or SQLite/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Sign in to Vercel/ })).toBeUndefined()
   await ui.unmount()
+})
+
+// ---- regression: what counts as a secret in a typed answer ----
+// Fake keys are assembled at runtime so no key-shaped string sits in the source (the repo is public, push protection on).
+const j = (...parts: string[]) => parts.join('')
+const RAND = 'Zx8kQ2mN7pL4vR9tW3yB6cH1dF5gJ0sAe7Uq'
+
+test('links, ids, paths and slugs are not secrets', () => {
+  for (const ok of [
+    'https://app.notion.com/p/yvproduct/Nigeria-Global-Bible-Month-3e2f1f2d1b9281aeb4cfe9ad4fa8c2b7?source=copy_link',
+    'Nigeria-Global-Bible-Month-3e2f1f2d1b9281aeb4cfe9ad4fa8c2b7',
+    'use this one: https://www.notion.so/3e2f1f2d1b9281aeb4cfe9ad4fa8c2b7',
+    'https://docs.google.com/document/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd/edit?usp=sharing',
+    'https://beacon-frontier-git-feat-admin-viewers-dans-projects-d4d642e1.vercel.app/admin',
+    'https://github.com/ender1311/beacon-frontier/pull/44',
+    'https://example.com/reset?code=abc123def456ghi789',
+    '86816d2f0c1e4b7a9d3f5e6a7b8c9d0e1f2a3b4c',
+    'f597f24c-8a8e-4368-932b-0151ff61ad14',
+    '/private/tmp/claude-502/-Users-danluk-projects-beacon-frontier/f597f24c-8a8e-4368-932b-0151ff61ad14/scratchpad',
+    'redesign-the-homepage-checker-results-page-for-mobile',
+    'skills-directory-for-claude-code-plugins',
+    'the primary key = customer_id',
+    'yes, ship it',
+  ]) expect(looksLikeSecret(ok), ok).toBe(false)
+})
+
+test('keys and tokens are secrets, even inside a link or an assignment', () => {
+  for (const bad of [
+    j('sk-', 'ant-api03-', RAND),
+    j('sk', '_live_', RAND),
+    j('gh', 'p_', RAND),
+    j('github', '_pat_', RAND, '_', RAND),
+    j('AK', 'IA', 'QWERTYUIOPASDFGH'),
+    j('AI', 'za', 'Sy', RAND.slice(0, 33)),
+    j('xo', 'xb-', '1234567890-', RAND),
+    j('re', '_AbC12345_', RAND),
+    j('ey', 'JhbGciOiJIUzI1NiJ9', '.', 'ey', 'JzdWIiOiIxMjM0NTY3ODkwIn0', '.', RAND),
+    j('-----BEGIN ', 'PRIVATE KEY-----'),
+    j('STRIPE_SECRET_KEY', '=', 'abcdef123456'),
+    j('postgres://admin:', 'hunter2hunter2', '@db.example.com/app'),
+    j('https://hooks.slack.com/', 'services/T000/B000/', RAND),
+    j('https://api.example.com/v1/data?', 'api_key=', 'abcd1234efgh5678'),
+    RAND,
+    j('here it is ', RAND, ' thanks'),
+  ]) expect(looksLikeSecret(bad), bad.slice(0, 12)).toBe(true)
 })
