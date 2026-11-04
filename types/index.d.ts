@@ -70,6 +70,8 @@ declare module 'claude-code' {
       showSettings: boolean
       isTurnRunning: boolean
       cleared: number
+      /** Off for this session (FLOW_AUTOSTART=off); /flow turns it on. */
+      isOff: boolean
       skipped: Shaped<string[]>
       /** Titles of cards already answered, so a later look-ahead never asks them again. */
       answered: Shaped<string[]>

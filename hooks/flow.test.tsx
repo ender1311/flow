@@ -355,6 +355,87 @@ test('a scan in flight when Stop is pressed adds no cards', async ($, on) => {
   await ui.unmount()
 })
 
+// ---- off by default: FLOW_AUTOSTART=off in the machine's settings env ----
+
+async function setupOff($: Engine, on: Parameters<typeof mock.store>[0], env: Record<string, string>) {
+  modelCalls = []
+  gate = false
+  mock.env(on, env)
+  mock.clock(on, { now: 1_000_000 })
+  mock.store(on)
+  const opened: string[] = []
+  const closed: string[] = []
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('model.fork', () => {
+    modelCalls.push('fork')
+    return { value: { isAnswered: true, text: '{"cards":[]}' } } as never
+  })
+  on('model.complete', () => {
+    modelCalls.push('complete')
+    return { value: { isAnswered: true, text: '{"cards":[]}' } } as never
+  })
+  on('command.register', () => ({ value: { command: 'flow' } }))
+  on('ui.open', (_, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', (_, e) => {
+    closed.push(e.id)
+    return { value: undefined }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', () => ({ result: {} }))
+  on('turn.start', (_, e) => e as never)
+  on('turn.complete', (_, e) => e as never)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  return { opened, closed, toasts }
+}
+
+test('FLOW_AUTOSTART=off: no panel, no scans, no live cards until /flow', async ($, on) => {
+  const { opened, toasts } = await setupOff($, on, { FLOW_AUTOSTART: 'off' })
+  expect(opened).toEqual([])
+  await $.tool.call({ tool: 'Write', file_path: '/work/quiet.html', content: 'x' })
+  expect(toasts.filter(t => t.startsWith('Flow:'))).toEqual([])
+  expect(await flowCmd($, 'scan')).toMatchObject({ text: 'Flow is looking ahead.' }) // /flow scan turns it on
+  await flush()
+  expect(modelCalls[0]).toBe('fork')
+  expect(opened).toEqual([])
+})
+
+test('FLOW_AUTOSTART=off: /flow turns it on, opens the panel and looks ahead', async ($, on) => {
+  const { opened } = await setupOff($, on, { FLOW_AUTOSTART: 'OFF' })
+  const ui0 = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui0.find({ type: 'Text', text: /Flow is off for this session/ })).toBeDefined()
+  await ui0.unmount()
+  expect(modelCalls).toEqual([])
+  const res = await flowCmd($, '')
+  expect(res.text).toBe('Flow is on for this session.')
+  expect(opened).toEqual(['flow'])
+  await flush()
+  expect(modelCalls).toEqual(['fork'])
+  await $.tool.call({ tool: 'Write', file_path: '/work/now.html', content: 'x' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /Review now\.html/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('without FLOW_AUTOSTART the panel opens at start; /flow off closes it and stops live cards', async ($, on) => {
+  const { opened, closed } = await setupOff($, on, {})
+  expect(opened).toEqual(['flow'])
+  const res = await flowCmd($, 'off')
+  expect(res.text).toBe('Flow is off for this session. /flow turns it on.')
+  expect(closed).toEqual(['flow'])
+  await $.tool.call({ tool: 'Write', file_path: '/work/after-off.html', content: 'x' })
+  expect((await flowCmd($, 'on')).text).toBe('Flow is on for this session.')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /Review after-off\.html/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 // ---- regression: what counts as a secret in a typed answer ----
 // Fake keys are assembled at runtime so no key-shaped string sits in the source (the repo is public, push protection on).
 const j = (...parts: string[]) => parts.join('')

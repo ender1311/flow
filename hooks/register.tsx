@@ -43,6 +43,13 @@ const cleared = atom({ plugin: 'flow', key: 'cleared' } as const, 0)
 const answered = atom({ plugin: 'flow', key: 'answered' } as const, [] as string[], { shape: 'answered-1' })
 const held = atom({ plugin: 'flow', key: 'held' } as const, [] as Card[], { shape: 'held-1' })
 const skipped = atom({ plugin: 'flow', key: 'skipped' } as const, [] as string[], { shape: 'skipped-1' })
+// Off for this session: no panel, no scans, no live cards. Set at start from FLOW_AUTOSTART; /flow turns it on.
+const isOff = atom({ plugin: 'flow', key: 'isOff' } as const, false)
+
+/** FLOW_AUTOSTART=off (or 0, false, no) in the machine's settings env: each session starts with Flow off. */
+function startsOff(value: string | undefined): boolean {
+  return ['off', '0', 'false', 'no'].includes((value ?? '').trim().toLowerCase())
+}
 
 const KIND: Record<CardKind, { glyph: string; label: string; color: string }> = {
   decision: { glyph: '◆', label: 'DECIDE', color: TEAL },
@@ -94,7 +101,7 @@ let scanAbort: AbortController | undefined
 // ---------- scanning ----------
 
 async function runScan($: EngineInterface, why: string): Promise<void> {
-  if ((await read($, prefs)).isStopped) return
+  if ((await read($, isOff)) || (await read($, prefs)).isStopped) return
   const st = await read($, status)
   const startedAt = await $.clock.now()
   // A scan left "running" by a reload mid-scan counts as over after 3 minutes.
@@ -237,6 +244,7 @@ async function continueFlow($: EngineInterface): Promise<void> {
 }
 
 async function addLive($: EngineInterface, card: Card): Promise<void> {
+  if (await read($, isOff)) return
   if ((await read($, prefs)).isStopped) {
     // Real links Claude made: kept for when the person continues.
     await update($, held, h => (h.some(c => c.id === card.id) ? h : [...h, card].slice(-20)))
@@ -248,6 +256,31 @@ async function addLive($: EngineInterface, card: Card): Promise<void> {
   if ((await read($, cards)).length > before) $.ui.toast(`Flow: ${card.title}`)
 }
 
+/** Turns Flow on for this session: opens the panel, hands over waiting answers, and looks ahead. */
+async function turnOn($: EngineInterface): Promise<void> {
+  await update($, isOff, () => false)
+  const p = await read($, prefs)
+  if (p.send === 'instant') {
+    const waiting = await read($, answers)
+    if (waiting.length > 0) {
+      await update($, answers, () => [])
+      await deliver($, waiting).catch(() => undefined)
+    }
+  }
+  if (p.scan !== 'manual') void runScan($, 'turned on')
+}
+
+/** Turns Flow off for this session: stops scans and live cards and closes the panel. */
+async function turnOff($: EngineInterface): Promise<void> {
+  scanEpoch += 1
+  scanAbort?.abort()
+  scanAbort = undefined
+  await update($, isOff, () => true)
+  const at = await $.clock.now()
+  await update($, status, s => ({ ...s, isScanning: false, lastAt: at, note: 'off' }))
+  await $.ui.close({ id: PANE }).catch(() => undefined)
+}
+
 export const register: Register = on => {
   // ---------- lifecycle ----------
 
@@ -257,10 +290,13 @@ export const register: Register = on => {
     await $.command.register({
       name: 'flow',
       description: 'Flow: open the panel of what Claude needs from you',
-      argumentHint: '[scan | send | stop | continue | 1-20 | fit]',
+      argumentHint: '[on | off | scan | send | stop | continue | 1-20 | fit]',
     })
-    void $.ui.open({ id: PANE, title: 'Flow' })
-    if ((await read($, prefs)).send === 'instant') {
+    // FLOW_AUTOSTART=off: off until the person runs /flow in this session. The timers below still run and check it.
+    const off = startsOff(await $.env.get('FLOW_AUTOSTART'))
+    await update($, isOff, () => off)
+    if (!off) void $.ui.open({ id: PANE, title: 'Flow' })
+    if (!off && (await read($, prefs)).send === 'instant') {
       const waiting = await read($, answers)
       if (waiting.length > 0) {
         await update($, answers, () => [])
@@ -274,7 +310,7 @@ export const register: Register = on => {
     $.clock.every(LIVE_EVERY_MS, () => {
       void (async () => {
         const p = await read($, prefs)
-        if (p.scan !== 'live' || !(await read($, isTurnRunning)) || toolsSinceScan < 4) return
+        if (p.scan !== 'live' || (await read($, isOff)) || !(await read($, isTurnRunning)) || toolsSinceScan < 4) return
         const st = await read($, status)
         if ((await $.clock.now()) - st.lastAt < LIVE_MIN_GAP_MS) return
         await runScan($, 'looking ahead while Claude works')
@@ -286,6 +322,17 @@ export const register: Register = on => {
 
   on('command.run', { command: 'flow' }, async ($, e) => {
     const arg = String(e.args ?? '').trim().toLowerCase()
+    if (arg === 'off') {
+      await turnOff($)
+      return { text: 'Flow is off for this session. /flow turns it on.' }
+    }
+    // Any other /flow turns Flow on first when this session started with it off.
+    const wasOff = await read($, isOff)
+    if (wasOff) await turnOn($)
+    if (arg === 'on') {
+      await $.ui.open({ id: PANE, title: 'Flow', focus: true })
+      return { text: wasOff ? 'Flow is on for this session.' : 'Flow is already on.' }
+    }
     if (arg === 'stop') {
       await stopFlow($)
       return { text: 'Flow stopped. /flow continue starts it again.' }
@@ -309,6 +356,7 @@ export const register: Register = on => {
       await $.store.set('prefs-2', await read($, prefs)).catch(() => undefined)
     }
     await $.ui.open({ id: PANE, title: 'Flow', focus: true })
+    if (wasOff) return { text: 'Flow is on for this session.' }
     return { text: n === 0 && arg === 'fit' ? 'Flow fills the pane.' : 'Flow is open.' }
   })
 
@@ -323,7 +371,7 @@ export const register: Register = on => {
     const st = await read($, status)
     const now = await $.clock.now()
     const queue = await read($, cards)
-    if (p.scan !== 'manual' && (now - st.lastAt > TURN_MIN_GAP_MS || queue.length < backlogTarget(p.maxCards) - 2)) {
+    if (p.scan !== 'manual' && !(await read($, isOff)) && (now - st.lastAt > TURN_MIN_GAP_MS || queue.length < backlogTarget(p.maxCards) - 2)) {
       $.clock.after(800, () => {
         void runScan($, 'after the turn')
       })
@@ -389,6 +437,14 @@ export const register: Register = on => {
     const done = await read($, cleared)
     const now = await $.clock.now()
     // The field stands out: white-framed slate on a dark theme, white with a navy frame on a light one.
+    if (await read($, isOff)) {
+      return (
+        <Box flexDirection="column" width={width}>
+          <Text color={TEAL} weight="bold">≈ FLOW</Text>
+          <Text dimColor>Flow is off for this session. Run /flow to turn it on.</Text>
+        </Box>
+      )
+    }
     const rowsOfConfig = await $.config.list().catch(() => [])
     const theme = String(rowsOfConfig.find(r => r.key === 'theme')?.value ?? 'dark')
     const isLight = theme.startsWith('light')
