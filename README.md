@@ -48,6 +48,7 @@ You're juggling several projects. You come back to a Claude Code session for thi
 - **Fits your screen.** It shows 1, 2, 3, 6, 10 or 20 cards, or fills the panel and stops at the bottom. Clear a card and the next one slides in.
 - **Type or talk.** Every card has a field, and pressing Enter sends your answer to Claude immediately. ◖ speak puts the question in your prompt so you can answer with Claude Code's voice mode or macOS dictation (press fn twice).
 - **Never asks for secrets.** No passwords, codes or key values. It reads env var *names*, never their values, and won't send anything you type that looks like a key.
+- **One conversation, two places.** Answer in the panel or in the chat, and both sides know. Claude checks the panel before it asks, skips questions you already answered there, and cards you answer in the chat clear themselves.
 
 ## Install
 

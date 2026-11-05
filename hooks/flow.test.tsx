@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { cardRows, cardText, fileReviewCard, findReviewUrls, fit, looksLikeSecret, parseCards, rank, splitLinks } from './cards'
+import { cardRows, cardText, exactMatches, fileReviewCard, findReviewUrls, fit, looksLikeSecret, parseCards, rank, splitLinks } from './cards'
 
 const PANE = {
   plugin: 'flow',
@@ -486,4 +486,263 @@ test('keys and tokens outside https links are secrets', () => {
     RAND,
     j('here it is ', RAND, ' thanks'),
   ]) expect(looksLikeSecret(bad), bad.slice(0, 12)).toBe(true)
+})
+
+// ---- one conversation, two places: the panel and the chat share answers ----
+
+const syncCards = parseCards(
+  JSON.stringify({
+    cards: [
+      { kind: 'decision', title: 'Postgres or SQLite for v1?', urgency: 'blocking', options: [{ label: 'Postgres', recommended: true }, { label: 'SQLite' }] },
+      { kind: 'text', title: 'Which domain should the site use?', urgency: 'soon' },
+    ],
+  }),
+  1,
+)
+const dbCard = syncCards[0]!
+const domainCard = syncCards[1]!
+const CHECK = 'mcp__flow__check'
+
+type Sync = {
+  toasts: string[]
+  completes: string[]
+  dialogs: string[][]
+  /** The model's reply by kind of call; undefined fails the call. */
+  reply: (kind: 'pairs' | 'chat', prompt: string) => string | undefined
+  dialogAnswer: (question: string) => string
+  /** What a look-ahead finds. */
+  found: typeof syncCards
+}
+
+const ask = (...questions: string[]) =>
+  ({
+    tool: 'AskUserQuestion',
+    questions: questions.map(question => ({
+      question,
+      header: 'Q',
+      options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }],
+      multiSelect: false,
+    })),
+  }) as never
+
+async function setupSync($: Engine, on: Parameters<typeof mock.store>[0], env: Record<string, string> = {}): Promise<Sync> {
+  const s: Sync = { toasts: [], completes: [], dialogs: [], reply: () => undefined, dialogAnswer: () => 'B', found: syncCards }
+  mock.env(on, env)
+  mock.clock(on, { now: 1_000_000 })
+  mock.store(on)
+  on('ui.toast', (_, e) => {
+    s.toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('model.fork', () => ({ value: { isAnswered: true, text: JSON.stringify({ cards: s.found }) } }) as never)
+  on('model.complete', (_, e) => {
+    s.completes.push(e.prompt)
+    const text = s.reply(/reply settles/.test(e.system ?? '') ? 'chat' : 'pairs', e.prompt)
+    return { value: text === undefined ? { isAnswered: false, reason: 'empty-reply' } : { isAnswered: true, text } } as never
+  })
+  on('session.messages', () =>
+    ({
+      value: [
+        { role: 'user', content: [{ type: 'text', text: 'Build the app' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Should v1 use Postgres or SQLite? And which domain?' }] },
+      ],
+    }) as never,
+  )
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  on('command.register', () => ({ value: { command: 'flow' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', (_, e) => {
+    if (e.tool !== 'AskUserQuestion') return { result: {} }
+    const qs = (e as unknown as { questions: Array<{ question: string }> }).questions
+    s.dialogs.push(qs.map(q => q.question))
+    return { result: { questions: qs, answers: Object.fromEntries(qs.map(q => [q.question, s.dialogAnswer(q.question)])) } } as never
+  })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  if (!env.FLOW_AUTOSTART) {
+    await flowCmd($, 'scan')
+    await flush()
+  }
+  s.completes.length = 0
+  return s
+}
+
+const panel = ($: Engine) => $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 200 } }, surface: 'terminal' })
+
+async function answerOnPanel($: Engine, card: { id: string }, text: string) {
+  const ui = await panel($)
+  await ui.input({ key: `${card.id}:in`, text })
+  await ui.unmount()
+}
+
+async function onPanel($: Engine, title: RegExp): Promise<boolean> {
+  const ui = await panel($)
+  const found = (await ui.find({ type: 'Text', text: title })) !== undefined
+  await ui.unmount()
+  return found
+}
+
+const say = ($: Engine, text: string) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+
+const checkText = async ($: Engine, questions?: string[]) =>
+  String(((await $.tool.call({ tool: CHECK, ...(questions ? { questions } : {}) } as never)) as { result?: unknown }).result)
+
+test('exact text matches with no model call', async ($, on) => {
+  expect([...exactMatches(['  Postgres or SQLite for V1 ', 'Other?'], [{ id: 'x', question: 'postgres or sqlite for v1?' }])]).toEqual([[0, 'x']])
+  const s = await setupSync($, on)
+  await answerOnPanel($, dbCard, 'Postgres')
+  const r = await $.tool.call(ask('postgres or SQLite for v1'))
+  expect(s.completes).toEqual([])
+  expect(s.dialogs).toEqual([])
+  expect(r).toMatchObject({ result: { answers: { 'postgres or SQLite for v1': 'Postgres' } } })
+})
+
+test('a chat reply that answers an open card clears it, logs it and says so', async ($, on) => {
+  const s = await setupSync($, on)
+  s.reply = kind => (kind === 'chat' ? JSON.stringify({ answers: [{ id: dbCard.id, answer: 'Postgres' }, { id: 'nope', answer: 'x' }] }) : undefined)
+  expect(await onPanel($, /Postgres or SQLite/)).toBe(true)
+  await say($, 'Go with Postgres for now')
+  await flush()
+  expect(s.completes).toHaveLength(1)
+  expect(s.completes[0]).toContain('Should v1 use Postgres or SQLite?')
+  expect(s.toasts).toContain('Flow: cleared 1 card you answered in chat.')
+  expect(await onPanel($, /Postgres or SQLite/)).toBe(false)
+  expect(await onPanel($, /Which domain/)).toBe(true)
+  expect(await checkText($)).toContain('- Postgres or SQLite for v1? → Postgres')
+  // Slash commands and Flow's own messages are never read as answers.
+  await say($, '/flow 6')
+  await say($, 'Flow: an answer from the side panel.')
+  await flush()
+  expect(s.completes).toHaveLength(1)
+})
+
+test('AskUserQuestion answered in full from a panel answer never opens the dialog', async ($, on) => {
+  const s = await setupSync($, on)
+  await answerOnPanel($, dbCard, 'Postgres')
+  s.reply = kind => (kind === 'pairs' ? '{"pairs":[{"q":0,"id":"0"},{"q":7,"id":"0"},{"q":0,"id":"zz"}]}' : undefined)
+  const r = await $.tool.call(ask('Which database should v1 use?'))
+  expect(s.dialogs).toEqual([])
+  expect(r).toMatchObject({ result: { answers: { 'Which database should v1 use?': 'Postgres' } } })
+  expect(s.toasts).toContain("Flow answered Claude's question from what you already told it.")
+})
+
+test('AskUserQuestion partly answered: only the new question reaches the dialog', async ($, on) => {
+  const s = await setupSync($, on)
+  await answerOnPanel($, dbCard, 'Postgres')
+  s.reply = kind => (kind === 'pairs' ? '{"pairs":[]}' : undefined)
+  s.dialogAnswer = () => 'Lumen'
+  const r = await $.tool.call(ask('Postgres or SQLite for v1?', 'What should the app be called?'))
+  expect(s.dialogs).toEqual([['What should the app be called?']])
+  expect(r).toMatchObject({
+    result: {
+      questions: [{ question: 'Postgres or SQLite for v1?' }, { question: 'What should the app be called?' }],
+      answers: { 'Postgres or SQLite for v1?': 'Postgres', 'What should the app be called?': 'Lumen' },
+    },
+  })
+  expect(await checkText($)).toContain('- What should the app be called? → Lumen')
+})
+
+test('an answer in the dialog clears the matching card', async ($, on) => {
+  const s = await setupSync($, on)
+  s.reply = kind => (kind === 'pairs' ? JSON.stringify({ pairs: [{ q: 0, id: domainCard.id }] }) : undefined)
+  s.dialogAnswer = () => 'flow.dev'
+  await $.tool.call(ask('Which domain do you want?'))
+  expect(s.dialogs).toEqual([['Which domain do you want?']])
+  expect(s.toasts).toContain('Flow: cleared 1 card you answered in chat.')
+  expect(await onPanel($, /Which domain should/)).toBe(false)
+  expect(await onPanel($, /Postgres or SQLite/)).toBe(true)
+  expect(await checkText($)).toContain('- Which domain do you want? → flow.dev')
+})
+
+test('when the model call fails nothing is cleared and the dialog asks everything', async ($, on) => {
+  const s = await setupSync($, on)
+  await answerOnPanel($, dbCard, 'Postgres')
+  s.reply = () => undefined
+  const r = await $.tool.call(ask('Which database should v1 use?', 'Which domain do you want?'))
+  expect(s.dialogs).toEqual([['Which database should v1 use?', 'Which domain do you want?']])
+  expect(r).toMatchObject({ result: { answers: { 'Which database should v1 use?': 'B', 'Which domain do you want?': 'B' } } })
+  expect(s.toasts.filter(t => /cleared|answered Claude/.test(t))).toEqual([])
+  expect(await onPanel($, /Which domain should/)).toBe(true)
+  await say($, 'flow.dev')
+  await flush()
+  expect(await onPanel($, /Which domain should/)).toBe(true)
+})
+
+test('Flow off: AskUserQuestion goes straight through and check says so', async ($, on) => {
+  const s = await setupSync($, on, { FLOW_AUTOSTART: 'off' })
+  const r = await $.tool.call(ask('Postgres or SQLite for v1?'))
+  expect(s.dialogs).toEqual([['Postgres or SQLite for v1?']])
+  expect(r).toMatchObject({ result: { answers: { 'Postgres or SQLite for v1?': 'B' } } })
+  expect(s.completes).toEqual([])
+  expect(await checkText($, ['Postgres or SQLite for v1?'])).toBe('Flow is off in this session. Ask the person directly.')
+})
+
+test('check lists what is answered (unsent too), what waits on the panel and what is not known', async ($, on) => {
+  const s = await setupSync($, on)
+  expect(await checkText($, [])).toBe(
+    ['Waiting on the Flow panel:', '- Postgres or SQLite for v1?', '- Which domain should the site use?'].join('\n'),
+  )
+  const ui = await panel($)
+  await ui.press({ key: 'gear' })
+  await ui.press({ key: 'send-batch' })
+  await ui.press({ key: `${dbCard.id}:pick0` })
+  expect(await ui.find({ type: 'Button', text: /Send 1 answer/ })).toBeDefined()
+  await ui.unmount()
+  s.reply = kind => (kind === 'pairs' ? '{"pairs":[{"q":0,"id":"ans:0"}]}' : undefined)
+  expect(await checkText($, ['Which database for v1?', 'Which domain should the site use', 'What is the app name?'])).toBe(
+    [
+      'Already answered:',
+      '- Postgres or SQLite for v1? → Postgres (your recommendation)',
+      '',
+      'Waiting on the Flow panel:',
+      '- Which domain should the site use?',
+      '',
+      'Not known yet (ask these):',
+      '- What is the app name?',
+    ].join('\n'),
+  )
+  expect(await checkText($)).toBe(
+    [
+      'Already answered:',
+      '- Postgres or SQLite for v1? → Postgres (your recommendation)',
+      '',
+      'Waiting on the Flow panel:',
+      '- Which domain should the site use?',
+    ].join('\n'),
+  )
+  // check only reads: the batched answer still waits to be sent.
+  const after = await panel($)
+  expect(await after.find({ type: 'Button', text: /Send 1 answer/ })).toBeDefined()
+  await after.unmount()
+})
+
+test('check with nothing on file says to ask', async ($, on) => {
+  const s = await setupSync($, on, { FLOW_AUTOSTART: 'off' })
+  s.found = []
+  await flowCmd($, 'on')
+  await flush()
+  s.reply = () => '{"pairs":[]}'
+  expect(await checkText($)).toBe('Nothing on file yet. Ask the person.')
+})
+
+test('a secret-looking chat answer is never kept', async ($, on) => {
+  const s = await setupSync($, on)
+  const key = j('sk', '_live_', RAND)
+  // A key typed in the chat is not even read.
+  await say($, `the domain key is ${key}`)
+  await flush()
+  expect(s.completes).toEqual([])
+  // A key the model hands back as the answer clears the card but is not kept.
+  s.reply = kind => (kind === 'chat' ? JSON.stringify({ answers: [{ id: domainCard.id, answer: key }] }) : undefined)
+  await say($, 'use the one in the vault')
+  await flush()
+  expect(await onPanel($, /Which domain should/)).toBe(false)
+  // A key typed in the dialog is not kept either.
+  s.dialogAnswer = () => key
+  await $.tool.call(ask('What is the API token?'))
+  const text = await checkText($)
+  expect(text).not.toContain(key)
+  expect(text).not.toContain('Which domain')
+  expect(text).not.toContain('API token')
 })

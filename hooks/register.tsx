@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Answer, Card, CardKind, Prefs, ScanStatus } from '../types'
+import type { Answer, Card, CardKind, Prefs, ScanStatus, Settled } from '../types'
 import {
   answersMessage,
   backlogTarget,
@@ -15,11 +15,13 @@ import {
   isReviewableFile,
   looksLikeSecret,
   merge,
+  normalizeQuestion,
   rank,
   reviewCard,
   splitLinks,
 } from './cards'
 import { scan } from './scan'
+import { matchChatAnswers, matchQuestions } from './sync'
 
 const PANE = 'flow'
 const HOME = 'https://beaconfrontier.com/flow'
@@ -30,6 +32,9 @@ const DEFAULT_PREFS: Prefs = { maxCards: 0, scan: 'live', send: 'instant', isSto
 const LIVE_EVERY_MS = 30_000
 const LIVE_MIN_GAP_MS = 120_000
 const TURN_MIN_GAP_MS = 45_000
+const CHECK = 'mcp__flow__check'
+const CHECK_DESCRIPTION =
+  'Flow side panel: call this before you ask the person anything, in chat or with AskUserQuestion. Pass your questions. It returns what the person already answered (on the Flow panel or earlier in chat, including answers they have not sent yet) and which of your questions are already waiting on their Flow panel. Use those answers instead of asking again. For a question already on the panel, do not ask it in chat; say it is waiting on the Flow panel and keep working on what you can.'
 
 const cards = atom({ plugin: 'flow', key: 'cards' } as const, [] as Card[], { shape: 'cards-1' })
 const answers = atom({ plugin: 'flow', key: 'answers' } as const, [] as Answer[], { shape: 'answers-1' })
@@ -41,6 +46,8 @@ const showSettings = atom({ plugin: 'flow', key: 'showSettings' } as const, fals
 const isTurnRunning = atom({ plugin: 'flow', key: 'isTurnRunning' } as const, false)
 const cleared = atom({ plugin: 'flow', key: 'cleared' } as const, 0)
 const answered = atom({ plugin: 'flow', key: 'answered' } as const, [] as string[], { shape: 'answered-1' })
+// Every answer the person gave, on the panel or in the chat: the chat's Claude and the look-ahead read it.
+const settled = atom({ plugin: 'flow', key: 'settled' } as const, [] as Settled[], { shape: 'settled-1' })
 const held = atom({ plugin: 'flow', key: 'held' } as const, [] as Card[], { shape: 'held-1' })
 const skipped = atom({ plugin: 'flow', key: 'skipped' } as const, [] as string[], { shape: 'skipped-1' })
 // Off for this session: no panel, no scans, no live cards. Set at start from FLOW_AUTOSTART; /flow turns it on.
@@ -121,8 +128,12 @@ async function runScan($: EngineInterface, why: string): Promise<void> {
       await update($, status, () => ({ isScanning: false, lastAt: at, note: 'queue is full' }))
       return
     }
-    const done = [...(await read($, answered)), ...(await read($, answers)).map(a => a.title)]
-    const known = [...queue.map(c => c.title), ...done].slice(-80)
+    const done = [
+      ...(await read($, settled)).map(s => s.question),
+      ...(await read($, answered)),
+      ...(await read($, answers)).map(a => a.title),
+    ]
+    const known = [...new Set([...queue.map(c => c.title), ...done])].slice(-80)
     const found = await scan($, Math.min(8, room), known, controller.signal)
     // Stopped while this scan ran: its results and its status write are dropped.
     if (epoch !== scanEpoch || (await read($, prefs)).isStopped) return
@@ -171,6 +182,7 @@ async function answer($: EngineInterface, card: Card, text: string, isTyped = fa
   }
   drafts.delete(card.id)
   await update($, answered, list => [...list.filter(t => t !== card.title), card.title].slice(-150))
+  await addSettled($, [{ question: card.title, answer: reply, from: 'panel' }])
   await update($, cards, q => q.filter(c => c.id !== card.id))
   await update($, cleared, n => n + 1)
   await update($, openCard, id => (id === card.id ? '' : id))
@@ -181,6 +193,112 @@ async function answer($: EngineInterface, card: Card, text: string, isTyped = fa
   } else {
     await update($, answers, list => [...list.filter(a => a.cardId !== card.id), item])
   }
+}
+
+// ---------- one conversation, two places ----------
+
+/** Logs answers in the shared ledger. One that looks like a key is never kept. */
+async function addSettled($: EngineInterface, entries: ReadonlyArray<Omit<Settled, 'at'>>): Promise<void> {
+  const at = await $.clock.now()
+  const kept = entries.filter(x => x.question.trim() && x.answer.trim() && !looksLikeSecret(x.answer))
+  if (kept.length > 0) await update($, settled, list => [...list, ...kept.map(x => ({ ...x, at }))].slice(-150))
+}
+
+/** Takes cards the person answered in the chat off the panel. */
+async function clearFromChat($: EngineInterface, ids: readonly string[]): Promise<void> {
+  const gone = (await read($, cards)).filter(c => ids.includes(c.id))
+  if (gone.length === 0) return
+  const titles = gone.map(c => c.title)
+  await update($, cards, q => q.filter(c => !ids.includes(c.id)))
+  await update($, cleared, n => n + gone.length)
+  await update($, answered, list => [...list.filter(t => !titles.includes(t)), ...titles].slice(-150))
+  await update($, openCard, id => (ids.includes(id) ? '' : id))
+  const n = gone.length
+  $.ui.toast(`Flow: cleared ${n} card${n === 1 ? '' : 's'} you answered in chat.`)
+}
+
+/** What the person already said, newest first: answers not sent yet, then the ledger. */
+async function knownAnswers($: EngineInterface): Promise<Array<{ question: string; answer: string; cardId?: string }>> {
+  const pending = (await read($, answers)).map(a => ({ question: a.title, answer: a.text, cardId: a.cardId }))
+  const ledger = (await read($, settled)).map(s => ({ question: s.question, answer: s.answer })).reverse()
+  return [...[...pending].reverse(), ...ledger]
+}
+
+/** A chat message that answers open cards clears them. Runs after the prompt went on; never throws. */
+async function syncChat($: EngineInterface, text: string): Promise<void> {
+  try {
+    const open = await read($, cards)
+    if (open.length === 0 || looksLikeSecret(text)) return
+    const messages = await $.session.messages({ as: 'api' })
+    const last = [...messages].reverse().find(m => m.role === 'assistant')
+    const said = (last?.content ?? [])
+      .filter(b => b.type === 'text' && typeof b.text === 'string')
+      .map(b => b.text as string)
+      .join('\n')
+      .slice(-2000)
+    const found = await matchChatAnswers($, said, text, open)
+    if (found.length === 0) return
+    const byId = new Map(open.map(c => [c.id, c]))
+    await addSettled($, found.map(f => ({ question: byId.get(f.cardId)?.title ?? '', answer: f.answer, from: 'chat' as const })))
+    await clearFromChat($, found.map(f => f.cardId))
+  } catch {
+    // Syncing is a nicety: the card stays and can still be answered on the panel.
+  }
+}
+
+/** Answers given in the question dialog: logged, and cards that ask the same thing leave the panel. Never throws. */
+async function syncDialog($: EngineInterface, given: Record<string, unknown>): Promise<void> {
+  try {
+    const done = Object.entries(given).filter((x): x is [string, string] => typeof x[1] === 'string' && x[1].trim() !== '')
+    if (done.length === 0) return
+    await addSettled($, done.map(([question, answer]) => ({ question, answer, from: 'chat' as const })))
+    const open = await read($, cards)
+    if (open.length === 0) return
+    const found = await matchQuestions($, done.map(([q]) => q), open.map(c => ({ id: c.id, question: c.title })))
+    await clearFromChat($, [...new Set(found.values())])
+  } catch {
+    // The dialog's answer still reaches Claude; the cards just stay.
+  }
+}
+
+/** The check tool's answer: what is answered, what waits on the panel, what is not known. */
+async function checkText($: EngineInterface, asked: readonly string[]): Promise<string> {
+  if (await read($, isOff)) return 'Flow is off in this session. Ask the person directly.'
+  const known = await knownAnswers($)
+  const open = await read($, cards)
+  let done: string[]
+  let waiting: string[]
+  let unknown: string[] = []
+  if (asked.length === 0) {
+    // Newest first, so a question answered twice shows its latest answer.
+    const latest = new Map<string, string>()
+    for (const k of known) if (!latest.has(normalizeQuestion(k.question))) latest.set(normalizeQuestion(k.question), `- ${k.question} → ${k.answer}`)
+    done = [...latest.values()]
+    waiting = open.map(c => `- ${c.title}`)
+  } else {
+    const candidates = [...known.map((k, i) => ({ id: `ans:${i}`, question: k.question })), ...open.map(c => ({ id: c.id, question: c.title }))]
+    const found = await matchQuestions($, asked, candidates)
+    done = []
+    waiting = []
+    asked.forEach((q, i) => {
+      const id = found.get(i)
+      // Card ids are base36, so they never hold the ':' of an answer's id.
+      const k = id?.startsWith('ans:') ? known[Number(id.slice(4))] : undefined
+      const card = id === undefined || k ? undefined : open.find(c => c.id === id)
+      if (k) done.push(`- ${k.question} → ${k.answer}`)
+      else if (card) waiting.push(`- ${card.title}`)
+      else unknown.push(`- ${q}`)
+    })
+    done = [...new Set(done)]
+    waiting = [...new Set(waiting)]
+  }
+  const sections = [
+    ['Already answered:', done.slice(0, 30)],
+    ['Waiting on the Flow panel:', waiting],
+    ['Not known yet (ask these):', unknown],
+  ] as const
+  const text = sections.filter(([, lines]) => lines.length > 0).map(([head, lines]) => [head, ...lines].join('\n')).join('\n\n')
+  return text || 'Nothing on file yet. Ask the person.'
 }
 
 async function skip($: EngineInterface, card: Card): Promise<void> {
@@ -317,7 +435,15 @@ export const register: Register = on => {
       })()
     })
 
-    return next(e)
+    const started = await next(e)
+    // Claude asks the panel before it asks the person. Without it, Flow still works; the chat just may re-ask.
+    await $.tool.register({
+      name: 'check',
+      description: CHECK_DESCRIPTION,
+      inputSchema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'string' } } } },
+      isDeferred: false,
+    }).catch(() => undefined)
+    return started
   })
 
   on('command.run', { command: 'flow' }, async ($, e) => {
@@ -380,6 +506,7 @@ export const register: Register = on => {
   })
 
   // A spoken or typed answer from the prompt, tagged by the ◖ speak button, clears its card.
+  // Any other chat message that answers open cards clears them too (after the prompt went on, never holding it).
   on('prompt.submit', async ($, e, next) => {
     const tag = /\[flow:([a-z0-9]+)\]/.exec(e.text)
     if (tag) {
@@ -387,7 +514,12 @@ export const register: Register = on => {
       await update($, cards, q => q.filter(c => c.id !== id))
       await update($, cleared, n => n + 1)
     }
-    return next(e)
+    const out = await next(e)
+    const text = e.text.trim()
+    if (!tag && out.drop === undefined && text && !text.startsWith('/') && !text.startsWith('Flow:') && !(await read($, isOff))) {
+      void syncChat($, text)
+    }
+    return out
   }).catch(($, e, next) => next(e))
 
   // Live review links: from what Claude actually does, with no model call.
@@ -416,6 +548,48 @@ export const register: Register = on => {
     }
     return ran
   }).catch(($, e, next) => next(e))
+
+  // The question dialog: questions the person already answered (panel or chat) are answered for Claude, and
+  // what they answer in the dialog clears matching cards. Any failure shows the dialog as it was asked.
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    if (await read($, isOff)) return next(e)
+    const questions = e.questions.map(q => q.question)
+    const known = await knownAnswers($)
+    const found = await matchQuestions($, questions, known.map((k, i) => ({ id: String(i), question: k.question })), next.signal)
+    const pre: Record<string, string> = {}
+    const used = new Set<string>()
+    for (const [i, id] of found) {
+      const k = known[Number(id)]
+      const q = questions[i]
+      if (!k || q === undefined) continue
+      pre[q] = k.answer
+      if (k.cardId) used.add(k.cardId)
+    }
+    const handOver = async () => {
+      if (used.size > 0) await update($, answers, list => list.filter(a => !used.has(a.cardId)))
+      $.ui.toast("Flow answered Claude's question from what you already told it.")
+    }
+    const unmatched = e.questions.filter(q => !Object.hasOwn(pre, q.question))
+    if (unmatched.length === 0) {
+      await handOver()
+      return { result: { questions: e.questions, answers: pre } }
+    }
+    const ran = await next(unmatched.length === e.questions.length ? e : { ...e, questions: unmatched })
+    if (ran.deny !== undefined || ran.isError) return ran
+    const given = (ran.result.answers ?? {}) as Record<string, unknown>
+    if (ran.result.afkTimeoutMs === undefined) await syncDialog($, given)
+    if (unmatched.length === e.questions.length) return ran
+    await handOver()
+    return { result: { ...ran.result, questions: e.questions, answers: { ...pre, ...given } } }
+  }).catch(($, e, next) => next(e))
+
+  // Flow's own tool: what the person already answered and what waits on the panel.
+  on('tool.call', { tool: CHECK }, async ($, e) => {
+    const asked = Array.isArray(e.questions)
+      ? e.questions.filter((q): q is string => typeof q === 'string' && q.trim() !== '').slice(0, 20)
+      : []
+    return { result: await checkText($, asked) }
+  }).catch(() => ({ result: 'Flow could not read its panel just now. Ask the person directly.' }))
 
   // ---------- drawing ----------
 

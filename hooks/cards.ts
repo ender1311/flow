@@ -341,3 +341,66 @@ export function looksLikeSecret(text: string): boolean {
   if (KEY_FORMATS.some(re => re.test(rest)) || SECRET_ASSIGNMENT.test(rest) || URL_WITH_PASSWORD.test(rest)) return true
   return looksRandom(rest.replace(ANY_URL, ' '))
 }
+
+// ---- one conversation, two places: matching questions across the panel and the chat ----
+
+/** Lowercase, single spaces, no trailing ?.! : two askings of the same words compare equal. */
+export function normalizeQuestion(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim().replace(/[?.!\s]+$/, '')
+}
+
+export type Candidate = { id: string; question: string }
+
+/** Exact matches after normalizing, question index → candidate id; the first candidate wins. */
+export function exactMatches(questions: readonly string[], candidates: readonly Candidate[]): Map<number, string> {
+  const byText = new Map<string, string>()
+  for (const c of candidates) {
+    const key = normalizeQuestion(c.question)
+    if (key && !byText.has(key)) byText.set(key, c.id)
+  }
+  const out = new Map<number, string>()
+  questions.forEach((q, i) => {
+    const id = byText.get(normalizeQuestion(q))
+    if (id !== undefined) out.set(i, id)
+  })
+  return out
+}
+
+function jsonObject(reply: string): Record<string, unknown> | undefined {
+  const start = reply.indexOf('{')
+  const end = reply.lastIndexOf('}')
+  if (start < 0 || end <= start) return undefined
+  try {
+    const data: unknown = JSON.parse(reply.slice(start, end + 1))
+    return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Reads `{"pairs":[{"q":0,"id":"…"}]}`, keeping only the question indexes and ids that were offered. */
+export function parsePairs(reply: string, indexes: ReadonlySet<number>, ids: ReadonlySet<string>): Map<number, string> {
+  const out = new Map<number, string>()
+  const pairs = jsonObject(reply)?.pairs
+  if (!Array.isArray(pairs)) return out
+  for (const p of pairs) {
+    if (typeof p !== 'object' || p === null) continue
+    const { q, id } = p as Record<string, unknown>
+    if (typeof q === 'number' && indexes.has(q) && typeof id === 'string' && ids.has(id) && !out.has(q)) out.set(q, id)
+  }
+  return out
+}
+
+/** Reads `{"answers":[{"id":"…","answer":"…"}]}`, keeping only offered ids with a non-empty answer. */
+export function parseChatAnswers(reply: string, ids: ReadonlySet<string>): Array<{ cardId: string; answer: string }> {
+  const out: Array<{ cardId: string; answer: string }> = []
+  const list = jsonObject(reply)?.answers
+  if (!Array.isArray(list)) return out
+  for (const a of list) {
+    if (typeof a !== 'object' || a === null) continue
+    const o = a as Record<string, unknown>
+    const answer = str(o.answer, 200)
+    if (typeof o.id === 'string' && ids.has(o.id) && answer && !out.some(x => x.cardId === o.id)) out.push({ cardId: o.id, answer })
+  }
+  return out
+}

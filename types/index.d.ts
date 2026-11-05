@@ -39,6 +39,9 @@ export type Card = {
 
 export type Answer = { cardId: string; title: string; text: string }
 
+/** One answer the person gave, on the panel or in the chat, so neither side asks it again. */
+export type Settled = { question: string; answer: string; from: 'panel' | 'chat'; at: number }
+
 export type Prefs = {
   /** Most cards on screen; 0 fills the pane and stops at its bottom edge. */
   maxCards: number
@@ -57,6 +60,10 @@ export type ScanStatus = {
 }
 
 declare module 'claude-code' {
+  interface McpToolInputs {
+    /** Flow's own tool: what the person already answered, and what waits on the panel. */
+    mcp__flow__check: { questions?: string[] }
+  }
   interface PluginState {
     'flow': {
       cards: Shaped<Card[]>
@@ -75,6 +82,8 @@ declare module 'claude-code' {
       skipped: Shaped<string[]>
       /** Titles of cards already answered, so a later look-ahead never asks them again. */
       answered: Shaped<string[]>
+      /** Every answer given, panel or chat (never a secret), newest last. */
+      settled: Shaped<Settled[]>
     }
   }
 }
