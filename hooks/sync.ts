@@ -6,7 +6,8 @@ import type { Candidate } from './cards'
 
 // A small, fast model: these calls sit in front of the question dialog.
 const MODEL = 'haiku'
-const TIMEOUT_MS = 15_000
+// Short: the dialog waits on this call.
+const TIMEOUT_MS = 8_000
 
 /**
  * Which of `questions` already sit among `candidates`: question index → candidate id.

@@ -577,7 +577,8 @@ export const register: Register = on => {
     const ran = await next(unmatched.length === e.questions.length ? e : { ...e, questions: unmatched })
     if (ran.deny !== undefined || ran.isError) return ran
     const given = (ran.result.answers ?? {}) as Record<string, unknown>
-    if (ran.result.afkTimeoutMs === undefined) await syncDialog($, given)
+    // In the background: clearing cards must never hold the answer back from Claude.
+    if (ran.result.afkTimeoutMs === undefined) void syncDialog($, given)
     if (unmatched.length === e.questions.length) return ran
     await handOver()
     return { result: { ...ran.result, questions: e.questions, answers: { ...pre, ...given } } }

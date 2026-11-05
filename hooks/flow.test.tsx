@@ -649,6 +649,8 @@ test('an answer in the dialog clears the matching card', async ($, on) => {
   s.dialogAnswer = () => 'flow.dev'
   await $.tool.call(ask('Which domain do you want?'))
   expect(s.dialogs).toEqual([['Which domain do you want?']])
+  // Cards clear in the background, after the answer has gone back to Claude.
+  await flush()
   expect(s.toasts).toContain('Flow: cleared 1 card you answered in chat.')
   expect(await onPanel($, /Which domain should/)).toBe(false)
   expect(await onPanel($, /Postgres or SQLite/)).toBe(true)
