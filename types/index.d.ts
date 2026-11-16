@@ -59,6 +59,27 @@ export type ScanStatus = {
   note: string
 }
 
+/** Usage counts kept across sessions for the Insights view. */
+export type Stats = {
+  /** Local 'YYYY-MM-DD' to answers that day (panel and chat). */
+  days: Record<string, number>
+  byKind: Partial<Record<CardKind, number>>
+  panel: number
+  chat: number
+  typed: number
+  buttons: number
+  spoken: number
+  /** Answers handed over while Claude was mid-build. */
+  midBuild: number
+  /** Ms from a card's createdAt to its answer, last 200. */
+  waits: number[]
+  /** Answered cards found ahead: from the ask, the project or what is coming. */
+  ahead: number
+  /** Review cards surfaced live. */
+  reviews: number
+  skipped: number
+}
+
 declare module 'claude-code' {
   interface McpToolInputs {
     /** Flow's own tool: what the person already answered, and what waits on the panel. */
@@ -84,6 +105,9 @@ declare module 'claude-code' {
       answered: Shaped<string[]>
       /** Every answer given, panel or chat (never a secret), newest last. */
       settled: Shaped<Settled[]>
+      view: 'cards' | 'insights'
+      /** Mirror of the stored usage counts, so the pane redraws. */
+      stats: Shaped<Stats>
     }
   }
 }

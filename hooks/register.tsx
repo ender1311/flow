@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Answer, Card, CardKind, Prefs, ScanStatus, Settled } from '../types'
+import type { Answer, Card, CardKind, Prefs, ScanStatus, Settled, Stats } from '../types'
 import {
   answersMessage,
   backlogTarget,
@@ -20,6 +20,7 @@ import {
   reviewCard,
   splitLinks,
 } from './cards'
+import { answeredCount, cellKey, dayKey, duration, emptyStats, heatmap, median, shiftKey, streaks, summaryText, tally } from './insights'
 import { scan } from './scan'
 import { matchChatAnswers, matchQuestions } from './sync'
 
@@ -52,6 +53,8 @@ const held = atom({ plugin: 'flow', key: 'held' } as const, [] as Card[], { shap
 const skipped = atom({ plugin: 'flow', key: 'skipped' } as const, [] as string[], { shape: 'skipped-1' })
 // Off for this session: no panel, no scans, no live cards. Set at start from FLOW_AUTOSTART; /flow turns it on.
 const isOff = atom({ plugin: 'flow', key: 'isOff' } as const, false)
+const view = atom({ plugin: 'flow', key: 'view' } as const, 'cards' as 'cards' | 'insights')
+const stats = atom({ plugin: 'flow', key: 'stats' } as const, emptyStats(), { shape: 'stats-1' })
 
 /** FLOW_AUTOSTART=off (or 0, false, no) in the machine's settings env: each session starts with Flow off. */
 function startsOff(value: string | undefined): boolean {
@@ -153,12 +156,26 @@ async function runScan($: EngineInterface, why: string): Promise<void> {
 
 // ---------- answering ----------
 
+/** Counts usage in the store (kept across sessions) and the atom (redraws). A failure never touches answering. */
+async function recordStats($: EngineInterface, fn: (s: Stats) => Stats): Promise<void> {
+  try {
+    const kept = (await $.store.get('stats-1').catch(() => undefined)) as Partial<Stats> | undefined
+    const cur = kept && typeof kept === 'object' ? { ...emptyStats(), ...kept } : await read($, stats)
+    const next = fn(cur)
+    await update($, stats, () => next)
+    await $.store.set('stats-1', next).catch(() => undefined)
+  } catch {
+    // Stats are a nicety.
+  }
+}
+
 async function deliver($: EngineInterface, list: readonly Answer[]): Promise<void> {
   if (list.length === 0) return
   const text = answersMessage(list)
   if (await read($, isTurnRunning)) {
     // Claude is mid-build: the answers join the running turn at its next step.
     await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
+    await recordStats($, s => ({ ...s, midBuild: s.midBuild + list.length }))
     $.ui.toast(`Handed to Claude mid-build ✓ (${list.length})`)
   } else {
     await $.prompt.submit({ text, asUser: true })
@@ -181,6 +198,8 @@ async function answer($: EngineInterface, card: Card, text: string, isTyped = fa
     return
   }
   drafts.delete(card.id)
+  const at = await $.clock.now()
+  await recordStats($, s => tally(s, card, at, isTyped ? 'typed' : 'buttons'))
   await update($, answered, list => [...list.filter(t => t !== card.title), card.title].slice(-150))
   await addSettled($, [{ question: card.title, answer: reply, from: 'panel' }])
   await update($, cards, q => q.filter(c => c.id !== card.id))
@@ -213,6 +232,8 @@ async function clearFromChat($: EngineInterface, ids: readonly string[]): Promis
   await update($, cleared, n => n + gone.length)
   await update($, answered, list => [...list.filter(t => !titles.includes(t)), ...titles].slice(-150))
   await update($, openCard, id => (ids.includes(id) ? '' : id))
+  const at = await $.clock.now()
+  await recordStats($, s => gone.reduce((acc, c) => tally(acc, c, at, 'chat'), s))
   const n = gone.length
   $.ui.toast(`Flow: cleared ${n} card${n === 1 ? '' : 's'} you answered in chat.`)
 }
@@ -304,6 +325,7 @@ async function checkText($: EngineInterface, asked: readonly string[]): Promise<
 async function skip($: EngineInterface, card: Card): Promise<void> {
   await update($, cards, q => q.filter(c => c.id !== card.id))
   await update($, skipped, s => [...s, card.id].slice(-200))
+  await recordStats($, s => ({ ...s, skipped: s.skipped + 1 }))
 }
 
 async function later($: EngineInterface, card: Card): Promise<void> {
@@ -371,7 +393,10 @@ async function addLive($: EngineInterface, card: Card): Promise<void> {
   const skip = await read($, skipped)
   const before = (await read($, cards)).length
   await update($, cards, q => merge(q, [card], skip))
-  if ((await read($, cards)).length > before) $.ui.toast(`Flow: ${card.title}`)
+  if ((await read($, cards)).length > before) {
+    $.ui.toast(`Flow: ${card.title}`)
+    if (card.kind === 'review') await recordStats($, s => ({ ...s, reviews: s.reviews + 1 }))
+  }
 }
 
 /** Turns Flow on for this session: opens the panel, hands over waiting answers, and looks ahead. */
@@ -405,10 +430,12 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const kept = (await $.store.get('prefs-2')) as Partial<Prefs> | undefined
     if (kept && typeof kept === 'object') await update($, prefs, p => ({ ...p, ...kept }))
+    const keptStats = (await $.store.get('stats-1').catch(() => undefined)) as Partial<Stats> | undefined
+    if (keptStats && typeof keptStats === 'object') await update($, stats, () => ({ ...emptyStats(), ...keptStats }))
     await $.command.register({
       name: 'flow',
       description: 'Flow: open the panel of what Claude needs from you',
-      argumentHint: '[on | off | scan | send | stop | continue | 1-20 | fit]',
+      argumentHint: '[on | off | scan | send | stop | continue | insights | 1-20 | fit]',
     })
     // FLOW_AUTOSTART=off: off until the person runs /flow in this session. The timers below still run and check it.
     const off = startsOff(await $.env.get('FLOW_AUTOSTART'))
@@ -472,6 +499,11 @@ export const register: Register = on => {
       void runScan($, 'you asked')
       return { text: 'Flow is looking ahead.' }
     }
+    if (arg === 'insights' || arg === 'stats') {
+      await update($, view, () => 'insights')
+      await $.ui.open({ id: PANE, title: 'Flow', focus: true })
+      return { text: 'Flow insights are open.' }
+    }
     if (arg === 'send') {
       await sendAll($)
       return { text: 'Flow sent your answers.' }
@@ -511,6 +543,12 @@ export const register: Register = on => {
     const tag = /\[flow:([a-z0-9]+)\]/.exec(e.text)
     if (tag) {
       const id = tag[1]
+      // Answered by ◖ speak: the card was on the panel, so it counts there.
+      const card = (await read($, cards)).find(c => c.id === id)
+      if (card) {
+        const at = await $.clock.now()
+        await recordStats($, s => tally(s, card, at, 'spoken'))
+      }
       await update($, cards, q => q.filter(c => c.id !== id))
       await update($, cleared, n => n + 1)
     }
@@ -611,6 +649,8 @@ export const register: Register = on => {
     const busy = await read($, isTurnRunning)
     const done = await read($, cleared)
     const now = await $.clock.now()
+    const shownView = await read($, view)
+    const usage = await read($, stats)
     // The field stands out: white-framed slate on a dark theme, white with a navy frame on a light one.
     if (await read($, isOff)) {
       return (
@@ -866,6 +906,124 @@ export const register: Register = on => {
       )
     }
 
+    // --- insights ---
+    const drawInsights = () => {
+      const total = answeredCount(usage)
+      const title = (
+        <Box justifyContent="space-between">
+          <Text weight="bold">Insights</Text>
+          <Button key="cards" plain dimColor label="← cards" onPress={() => void update($, view, () => 'cards')} />
+        </Box>
+      )
+      if (total === 0) {
+        return (
+          <Box flexDirection="column">
+            {title}
+            <Text dimColor>No answers yet. Insights fill in as you answer cards.</Text>
+          </Box>
+        )
+      }
+      const stat = (value: string, label: string) => (
+        <Box key={`stat-${label}`} flexDirection="column">
+          <Text weight="bold" color={TEAL}>{value}</Text>
+          <Text dimColor>{label}</Text>
+        </Box>
+      )
+      const barWidth = Math.max(1, width - 2)
+      const panelCells = Math.round((usage.panel / total) * barWidth)
+      const panelPct = Math.round((usage.panel / total) * 100)
+      const kinds = (Object.entries(usage.byKind) as Array<[CardKind, number]>).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])
+      const kindTotal = kinds.reduce((sum, [, n]) => sum + n, 0)
+      const kindMax = kinds[0]?.[1] ?? 1
+      const kindBar = Math.max(1, Math.min(Math.floor(width / 2), width - 22))
+      const today = dayKey(now)
+      const { current, longest } = streaks(usage.days, today)
+      const streakEnd = (usage.days[today] ?? 0) > 0 ? today : shiftKey(today, -1)
+      const inStreak = new Set(Array.from({ length: current }, (_, i) => shiftKey(streakEnd, -i)))
+      const weeks = Math.max(1, Math.min(26, Math.floor((width - 4) / 2)))
+      const grid = heatmap(usage.days, now, weeks)
+      const months = Array.from({ length: 2 + weeks * 2 }, () => ' ')
+      let lastEnd = 0
+      for (let col = 0; col < weeks; col++) {
+        const first = Array.from({ length: 7 }, (_, row) => cellKey(now, weeks, row, col)).find(k => k.endsWith('-01'))
+        const at = 2 + col * 2
+        if (!first || at < lastEnd || at + 3 > months.length) continue
+        const name = 'JanFebMarAprMayJunJulAugSepOctNovDec'.slice((Number(first.slice(5, 7)) - 1) * 3).slice(0, 3)
+        for (let i = 0; i < 3; i++) months[at + i] = name[i] ?? ' '
+        lastEnd = at + 4
+      }
+      const cell = (count: number | null, row: number, col: number) => {
+        const key = `heat:${row}:${col}`
+        if (count === null) return '  '
+        if (count === 0) return <Text key={key} dimColor>{'· '}</Text>
+        return (
+          <Text key={key} color={TEAL} weight={inStreak.has(cellKey(now, weeks, row, col)) ? 'bold' : undefined}>
+            {count <= 2 ? '▪ ' : count <= 5 ? '■ ' : '█ '}
+          </Text>
+        )
+      }
+      return (
+        <Box flexDirection="column">
+          {title}
+          <Box justifyContent="space-between" marginTop={1}>
+            {stat(String(total), 'answered')}
+            {stat(duration(median(usage.waits)), 'median reply')}
+            {stat(String(usage.midBuild), 'mid-build')}
+          </Box>
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>Where you answered</Text>
+            <Text>
+              <Text color={TEAL}>{'█'.repeat(panelCells)}</Text>
+              <Text color="#6fb7e8">{'█'.repeat(barWidth - panelCells)}</Text>
+            </Text>
+            <Text>{`panel ${panelPct}% · chat ${100 - panelPct}%`}</Text>
+          </Box>
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>What Claude needed</Text>
+            {kinds.map(([kind, n]) => {
+              const cells = Math.max(1, Math.round((n / kindMax) * kindBar))
+              return (
+                <Text key={`kind-${kind}`}>
+                  {`${KIND[kind].glyph} ${KIND[kind].label.padEnd(7)}  `}
+                  <Text color={TEAL}>{'█'.repeat(cells)}</Text>
+                  {`${' '.repeat(kindBar - cells)} ${String(Math.round((n / kindTotal) * 100)).padStart(3)}%  ${n}`}
+                </Text>
+              )
+            })}
+          </Box>
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>{`${usage.typed} typed · ${usage.buttons} buttons · ${usage.spoken} spoken`}</Text>
+            <Text>{`${usage.ahead} caught ahead · ${usage.reviews} review links · ${usage.skipped} skipped`}</Text>
+          </Box>
+          <Box flexDirection="column" marginTop={1}>
+            <Box justifyContent="space-between">
+              <Text weight="bold">{`${current} day streak`}</Text>
+              <Text dimColor>{`longest ${longest}`}</Text>
+            </Box>
+            <Text dimColor>{months.join('').trimEnd()}</Text>
+            {grid.map((counts, row) => (
+              <Text key={`heat-${row}`}>
+                <Text dimColor>{`${'SMTWTFS'[row]} `}</Text>
+                {counts.map((count, col) => cell(count, row, col))}
+              </Text>
+            ))}
+          </Box>
+          <Box marginTop={1}>
+            <Button
+              key="copy-insights"
+              plain
+              dimColor
+              label="⧉ copy summary"
+              onPress={async press => {
+                const res = await $.ui.copy({ text: summaryText(usage, now), surface: press.surface })
+                $.ui.toast(res.isCopied ? 'Insights copied.' : "Couldn't copy. Select the text and copy it instead.")
+              }}
+            />
+          </Box>
+        </Box>
+      )
+    }
+
     // --- the pane ---
     const beacon = st.isScanning ? '◌' : busy ? '◍' : '●'
     const statusLine = p.isStopped
@@ -891,6 +1049,7 @@ export const register: Register = on => {
               <Button key="stop" plain dimColor label="■ stop" onPress={() => void stopFlow($)} />
             )}
             {p.isStopped ? null : <Button key="scan" plain dimColor label="↻" onPress={() => void runScan($, 'you asked')} />}
+            <Button key="insights" plain dimColor label="▦" onPress={() => void update($, view, v => (v === 'cards' ? 'insights' : 'cards'))} />
             <Button key="gear" plain dimColor label="⚙" onPress={() => void update($, showSettings, v => !v)} />
           </Box>
         </Box>
@@ -930,6 +1089,11 @@ export const register: Register = on => {
           </Box>
         ) : null}
 
+        {shownView === 'insights' ? (
+          <Box flexDirection="column" marginTop={1}>
+            {drawInsights()}
+          </Box>
+        ) : (
         <Box flexDirection="column" marginTop={1}>
           {shown.length === 0 ? (
             <Box flexDirection="column" alignItems="center" paddingY={1}>
@@ -945,6 +1109,7 @@ export const register: Register = on => {
           )}
           {waiting > 0 ? <Text dimColor>{`  + ${waiting} more queued. Clear one and the next slides in.`}</Text> : null}
         </Box>
+        )}
 
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>Never asks for passwords or key values.</Text>

@@ -77,6 +77,7 @@ In the Claude desktop app, where `/plugin` doesn't run: click **+** next to the 
 | `/flow 6` | Shows at most 6 cards. `/flow fit` fills the panel |
 | `/flow scan` | Looks ahead now |
 | `/flow send` | Sends any answers you batched |
+| `/flow insights` | Shows your usage: answers given, median reply time, panel vs chat, what Claude needed, and your day streak. ▦ in the panel header does the same |
 | `/flow stop` | Stops all new cards and look-aheads until you continue. Cards already on the panel stay and can still be answered |
 | `/flow continue` | Starts Flow again (`/flow resume` and `/flow start` work too). Links Claude made while stopped are shown then |
 

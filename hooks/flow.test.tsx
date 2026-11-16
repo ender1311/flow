@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { cardRows, cardText, exactMatches, fileReviewCard, findReviewUrls, fit, looksLikeSecret, parseCards, rank, splitLinks } from './cards'
+import { dayKey, emptyStats, heatmap, streaks } from './insights'
 
 const PANE = {
   plugin: 'flow',
@@ -525,11 +526,18 @@ const ask = (...questions: string[]) =>
     })),
   }) as never
 
-async function setupSync($: Engine, on: Parameters<typeof mock.store>[0], env: Record<string, string> = {}): Promise<Sync> {
+async function setupSync($: Engine, on: Parameters<typeof mock.store>[0], env: Record<string, string> = {}, store?: Record<string, unknown>): Promise<Sync> {
   const s: Sync = { toasts: [], completes: [], dialogs: [], reply: () => undefined, dialogAnswer: () => 'B', found: syncCards }
   mock.env(on, env)
   mock.clock(on, { now: 1_000_000 })
-  mock.store(on)
+  if (store) {
+    // A store the test can look into.
+    on('store.get', (_, e) => ({ value: store[e.key] }) as never)
+    on('store.set', (_, e) => {
+      store[e.key] = e.value
+      return { value: undefined } as never
+    })
+  } else mock.store(on)
   on('ui.toast', (_, e) => {
     s.toasts.push(e.text)
     return { value: undefined }
@@ -747,4 +755,51 @@ test('a secret-looking chat answer is never kept', async ($, on) => {
   expect(text).not.toContain(key)
   expect(text).not.toContain('Which domain')
   expect(text).not.toContain('API token')
+})
+
+// ---- insights ----
+
+test('streaks count back across a gap, and from yesterday when today is empty', () => {
+  const days = { '2026-11-01': 2, '2026-11-02': 1, '2026-11-03': 4, '2026-11-05': 1, '2026-11-06': 3 }
+  expect(streaks(days, '2026-11-06')).toEqual({ current: 2, longest: 3 })
+  expect(streaks(days, '2026-11-07')).toEqual({ current: 2, longest: 3 })
+  expect(streaks(days, '2026-11-08')).toEqual({ current: 0, longest: 3 })
+  expect(streaks({ '2026-10-31': 1, '2026-11-01': 1 }, '2026-11-01')).toEqual({ current: 2, longest: 2 })
+})
+
+test('heatmap is 7 rows by weeks, today in the last column, future days null', () => {
+  const today = new Date(2026, 10, 12, 15).getTime() // a Thursday
+  const grid = heatmap({ '2026-11-12': 4, '2026-11-08': 1 }, today, 5)
+  expect(grid).toHaveLength(7)
+  for (const row of grid) expect(row).toHaveLength(5)
+  expect(grid[4]![4]).toBe(4)
+  expect(grid[0]![4]).toBe(1)
+  expect(grid[5]![4]).toBeNull()
+  expect(grid[6]![4]).toBeNull()
+  expect(grid[6]![3]).toBe(0)
+})
+
+test('a panel answer is counted and kept in the store', async ($, on) => {
+  const store: Record<string, unknown> = { 'stats-1': { ...emptyStats(), chat: 2 } }
+  await setupSync($, on, {}, store)
+  await answerOnPanel($, dbCard, 'Postgres')
+  const kept = store['stats-1'] as ReturnType<typeof emptyStats>
+  expect(kept).toMatchObject({ panel: 1, chat: 2, typed: 1, byKind: { decision: 1 }, days: { [dayKey(1_000_000)]: 1 } })
+  expect(kept.waits).toHaveLength(1)
+  const ui = await panel($)
+  await ui.press({ key: 'insights' })
+  expect(await ui.find({ type: 'Text', text: 'Insights' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /panel 33% · chat 67%/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('/flow insights opens the insights view; ← cards goes back', async ($, on) => {
+  await setupStop($, on)
+  expect((await flowCmd($, 'insights')).text).toBe('Flow insights are open.')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /No answers yet/ })).toBeDefined()
+  await ui.press({ key: 'cards' })
+  expect(await ui.find({ type: 'Text', text: /No answers yet/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /All clear/ })).toBeDefined()
+  await ui.unmount()
 })

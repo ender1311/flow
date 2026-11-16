@@ -1,6 +1,6 @@
 {
   "name": "flow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Flow: a side panel of everything Claude needs from you (decisions, logins, API keys, reviews, answers), so you stay in flow while Claude works.",
   "author": { "name": "Beacon Frontier", "url": "https://beaconfrontier.com/flow" },
   "homepage": "https://beaconfrontier.com/flow",
