@@ -25,7 +25,7 @@ import { scan } from './scan'
 import { matchChatAnswers, matchQuestions } from './sync'
 
 const PANE = 'flow'
-const HOME = 'https://beaconfrontier.com/flow'
+const COFFEE = 'https://buy.stripe.com/4gMcN52qI3gQeppbsUcjS03'
 const TEAL = '#3cc4b4'
 // Typed text is drawn in the terminal's own color: on a dark theme a white field hides it, so the fill is slate.
 const FIELD_DARK = '#34405c'
@@ -1114,7 +1114,7 @@ export const register: Register = on => {
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>Never asks for passwords or key values.</Text>
           <Text dimColor>
-            Free from Beacon Frontier · <Link href={HOME} label="☕ buy Dan a coffee" />
+            Free from Beacon Frontier · <Link href={COFFEE} label="☕ buy Dan a coffee" />
           </Text>
         </Box>
       </Box>
