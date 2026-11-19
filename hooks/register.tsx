@@ -8,6 +8,7 @@ import {
   answersMessage,
   backlogTarget,
   cardRows,
+  inputRows,
   cardText,
   fileReviewCard,
   findReviewUrls,
@@ -55,6 +56,7 @@ const skipped = atom({ plugin: 'flow', key: 'skipped' } as const, [] as string[]
 const isOff = atom({ plugin: 'flow', key: 'isOff' } as const, false)
 const view = atom({ plugin: 'flow', key: 'view' } as const, 'cards' as 'cards' | 'insights')
 const stats = atom({ plugin: 'flow', key: 'stats' } as const, emptyStats(), { shape: 'stats-1' })
+const draftRows = atom({ plugin: 'flow', key: 'draftRows' } as const, {} as Record<string, number>, { shape: 'draftRows-1' })
 
 /** FLOW_AUTOSTART=off (or 0, false, no) in the machine's settings env: each session starts with Flow off. */
 function startsOff(value: string | undefined): boolean {
@@ -651,6 +653,7 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const shownView = await read($, view)
     const usage = await read($, stats)
+    await read($, draftRows) // redraws when a draft needs more or fewer lines
     // The field stands out: white-framed slate on a dark theme, white with a navy frame on a light one.
     if (await read($, isOff)) {
       return (
@@ -667,7 +670,7 @@ export const register: Register = on => {
     const headerRows = 3 + (pending.length > 0 ? 2 : 0) + (settings ? 5 : 0)
     const footerRows = 3
     const room = Math.max(6, bodyRows - headerRows - footerRows)
-    const { shown, waiting } = fit(queue, p.maxCards, room, c => cardRows(c, width, c.id === open, Input !== undefined))
+    const { shown, waiting } = fit(queue, p.maxCards, room, c => cardRows(c, width, c.id === open, Input !== undefined, drafts.get(c.id)))
     const blocking = queue.filter(c => c.urgency === 'blocking').length
 
     const heldCards = await read($, held)
@@ -694,7 +697,10 @@ export const register: Register = on => {
             value={drafts.get(card.id)}
             submitLabel="answer"
             onInput={v => {
+              const before = inputRows(card.kind, drafts.get(card.id) ?? '', width)
               drafts.set(card.id, v)
+              const after = inputRows(card.kind, v, width)
+              if (after !== before) void update($, draftRows, m => ({ ...m, [card.id]: after }))
             }}
             onSubmit={v => void answer($, card, v, true)}
           />
@@ -900,7 +906,7 @@ export const register: Register = on => {
           <Text weight="bold">{linked(card.title)}</Text>
           {card.why ? <Text dimColor>{linked(card.why)}</Text> : null}
           {body}
-          {Input ? field(card.kind === 'text' ? 2 : 1) : null}
+          {Input ? field(inputRows(card.kind, drafts.get(card.id) ?? '', width)) : null}
           {tools}
         </Box>
       )

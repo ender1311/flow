@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { cardRows, cardText, exactMatches, fileReviewCard, findReviewUrls, fit, looksLikeSecret, parseCards, rank, splitLinks } from './cards'
+import { cardRows, cardText, inputRows, exactMatches, fileReviewCard, findReviewUrls, fit, looksLikeSecret, parseCards, rank, splitLinks } from './cards'
 import { dayKey, emptyStats, heatmap, streaks } from './insights'
 
 const PANE = {
@@ -250,6 +250,7 @@ test('cardRows matches the rows each card kind draws (hand-counted, the test API
   expect(cardRows(mk({ kind: 'action', url: URL_A }), 50, false, false)).toBe(6)
   expect(cardRows(mk({ kind: 'text' }), 50, false, false)).toBe(5)
   expect(cardRows(mk({ kind: 'text' }), 50, false, true)).toBe(9)
+  expect(cardRows(mk({ kind: 'text' }), 50, false, true, 'a\nb\nc')).toBe(10)
   const options = [{ label: 'A', pros: ['x'], risks: ['y'] }, { label: 'B' }]
   expect(cardRows(mk({ kind: 'decision', options }), 50, false, false)).toBe(7)
   expect(cardRows(mk({ kind: 'decision', options }), 50, true, false)).toBe(5 + 3 + 1)
@@ -802,4 +803,12 @@ test('/flow insights opens the insights view; ← cards goes back', async ($, on
   expect(await ui.find({ type: 'Text', text: /No answers yet/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /All clear/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('the answer field grows with typed and wrapped lines, up to 8', () => {
+  expect(inputRows('action', '', 50)).toBe(1)
+  expect(inputRows('text', '', 50)).toBe(2)
+  expect(inputRows('action', 'one\ntwo\nthree', 50)).toBe(3)
+  expect(inputRows('action', 'x'.repeat(43), 50)).toBe(2) // 42 fit on a line at width 50
+  expect(inputRows('text', 'a\n'.repeat(20), 50)).toBe(8)
 })

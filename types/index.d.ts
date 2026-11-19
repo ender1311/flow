@@ -108,6 +108,8 @@ declare module 'claude-code' {
       view: 'cards' | 'insights'
       /** Mirror of the stored usage counts, so the pane redraws. */
       stats: Shaped<Stats>
+      /** Lines each card's draft answer needs, so the field grows as the person types. */
+      draftRows: Shaped<Record<string, number>>
     }
   }
 }

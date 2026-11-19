@@ -107,7 +107,14 @@ export function merge(queue: readonly Card[], incoming: readonly Card[], skipped
 }
 
 /** The rows a card takes in the pane at `width` columns, for fitting to the screen. */
-export function cardRows(card: Card, width: number, isOpen: boolean, hasInput: boolean): number {
+/** Lines the answer field draws: its kind's floor, grown to fit the draft as typed and wrapped, at most 8. */
+export function inputRows(kind: CardKind, draft: string, width: number): number {
+  const inner = Math.max(8, width - 8) // card frame and padding, then the field's
+  const used = draft.split('\n').reduce((n, line) => n + Math.max(1, Math.ceil(line.length / inner)), 0)
+  return Math.min(8, Math.max(kind === 'text' ? 2 : 1, used))
+}
+
+export function cardRows(card: Card, width: number, isOpen: boolean, hasInput: boolean, draft = ''): number {
   const inner = Math.max(16, width - 4)
   const lines = (s: string) => (s ? Math.ceil(s.length / inner) : 0)
   let rows = 2 /* border */ + 1 /* kind line */ + lines(card.title) + lines(card.why)
@@ -121,7 +128,7 @@ export function cardRows(card: Card, width: number, isOpen: boolean, hasInput: b
   if (card.url) rows += 1 /* link line */
   if (card.kind === 'login' && card.command) rows += 1 /* "runs: !" line */
   if (card.kind === 'key') rows += 2 /* "put it in" and "never paste" */
-  if (hasInput) rows += card.kind === 'text' ? 4 : 3 // the field and its frame
+  if (hasInput) rows += inputRows(card.kind, draft, width) + 2 // the field and its frame
   rows += 1 /* buttons */
   return rows
 }
