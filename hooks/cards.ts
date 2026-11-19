@@ -106,14 +106,15 @@ export function merge(queue: readonly Card[], incoming: readonly Card[], skipped
   return out.slice(-60)
 }
 
-/** The rows a card takes in the pane at `width` columns, for fitting to the screen. */
 /** Lines the answer field draws: its kind's floor, grown to fit the draft as typed and wrapped, at most 8. */
 export function inputRows(kind: CardKind, draft: string, width: number): number {
-  const inner = Math.max(8, width - 8) // card frame and padding, then the field's
+  // Card and field frames and padding (8), and the submit label drawn beside a focused field (~10).
+  const inner = Math.max(8, width - 18)
   const used = draft.split('\n').reduce((n, line) => n + Math.max(1, Math.ceil(line.length / inner)), 0)
   return Math.min(8, Math.max(kind === 'text' ? 2 : 1, used))
 }
 
+/** The rows a card takes in the pane at `width` columns, for fitting to the screen. */
 export function cardRows(card: Card, width: number, isOpen: boolean, hasInput: boolean, draft = ''): number {
   const inner = Math.max(16, width - 4)
   const lines = (s: string) => (s ? Math.ceil(s.length / inner) : 0)

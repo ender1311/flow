@@ -809,6 +809,7 @@ test('the answer field grows with typed and wrapped lines, up to 8', () => {
   expect(inputRows('action', '', 50)).toBe(1)
   expect(inputRows('text', '', 50)).toBe(2)
   expect(inputRows('action', 'one\ntwo\nthree', 50)).toBe(3)
-  expect(inputRows('action', 'x'.repeat(43), 50)).toBe(2) // 42 fit on a line at width 50
+  expect(inputRows('action', 'x'.repeat(32), 50)).toBe(1) // 32 fit on a line at width 50, beside the label
+  expect(inputRows('action', 'x'.repeat(33), 50)).toBe(2)
   expect(inputRows('text', 'a\n'.repeat(20), 50)).toBe(8)
 })
