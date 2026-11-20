@@ -171,7 +171,7 @@ async function recordStats($: EngineInterface, fn: (s: Stats) => Stats): Promise
   }
 }
 
-const FIRST_SENT = "First one sent ✓ Claude has it. That's Flow."
+const FIRST_SENT = "First answer sent ✓ Claude has it, no waiting on you."
 
 async function deliver($: EngineInterface, list: readonly Answer[]): Promise<void> {
   if (list.length === 0) return

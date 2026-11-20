@@ -808,10 +808,10 @@ test('the first answer ever gets its own toast; later ones and the empty panel g
   const store: Record<string, unknown> = {}
   const s = await setupSync($, on, {}, store)
   await answerOnPanel($, dbCard, 'Postgres')
-  expect(s.toasts).toContain("First one sent ✓ Claude has it. That's Flow.")
+  expect(s.toasts).toContain("First answer sent ✓ Claude has it, no waiting on you.")
   await answerOnPanel($, domainCard, 'flow.dev')
   expect(s.toasts.at(-1)).toBe('Sent to Claude ✓ (1)')
-  expect(s.toasts.filter(t => t.startsWith('First one'))).toHaveLength(1)
+  expect(s.toasts.filter(t => t.startsWith('First answer'))).toHaveLength(1)
   const ui = await panel($)
   expect(await ui.find({ type: 'Text', text: /All clear/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Cards land here/ })).toBeUndefined()
