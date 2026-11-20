@@ -794,6 +794,30 @@ test('a panel answer is counted and kept in the store', async ($, on) => {
   await ui.unmount()
 })
 
+test('a new user\'s empty panel explains the cards', async ($, on) => {
+  await setupStop($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /All clear/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Cards land here when Claude needs you/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /press Enter/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /flow insights shows your stats/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the first answer ever gets its own toast; later ones and the empty panel go back to normal', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  const s = await setupSync($, on, {}, store)
+  await answerOnPanel($, dbCard, 'Postgres')
+  expect(s.toasts).toContain("First answer sent ✓ Claude has it, no waiting on you.")
+  await answerOnPanel($, domainCard, 'flow.dev')
+  expect(s.toasts.at(-1)).toBe('Sent to Claude ✓ (1)')
+  expect(s.toasts.filter(t => t.startsWith('First answer'))).toHaveLength(1)
+  const ui = await panel($)
+  expect(await ui.find({ type: 'Text', text: /All clear/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Cards land here/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('/flow insights opens the insights view; ← cards goes back', async ($, on) => {
   await setupStop($, on)
   expect((await flowCmd($, 'insights')).text).toBe('Flow insights are open.')
