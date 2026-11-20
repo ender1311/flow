@@ -171,17 +171,21 @@ async function recordStats($: EngineInterface, fn: (s: Stats) => Stats): Promise
   }
 }
 
+const FIRST_SENT = "First one sent ✓ Claude has it. That's Flow."
+
 async function deliver($: EngineInterface, list: readonly Answer[]): Promise<void> {
   if (list.length === 0) return
   const text = answersMessage(list)
+  // The answers were tallied before delivery, so the very first send is the only thing counted so far.
+  const first = answeredCount(await read($, stats)) === list.length
   if (await read($, isTurnRunning)) {
     // Claude is mid-build: the answers join the running turn at its next step.
     await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
     await recordStats($, s => ({ ...s, midBuild: s.midBuild + list.length }))
-    $.ui.toast(`Handed to Claude mid-build ✓ (${list.length})`)
+    $.ui.toast(first ? FIRST_SENT : `Handed to Claude mid-build ✓ (${list.length})`)
   } else {
     await $.prompt.submit({ text, asUser: true })
-    $.ui.toast(`Sent to Claude ✓ (${list.length})`)
+    $.ui.toast(first ? FIRST_SENT : `Sent to Claude ✓ (${list.length})`)
   }
 }
 
@@ -1109,6 +1113,13 @@ export const register: Register = on => {
                 {p.isStopped ? 'Flow is stopped. Press ▶ continue for new cards.' : st.isScanning ? 'Looking ahead for what is next…' : 'Claude has what it needs for now.'}
               </Text>
               {done > 0 ? <Text dimColor>{`You cleared ${done} this session.`}</Text> : null}
+              {answeredCount(usage) === 0 ? (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text dimColor>Cards land here when Claude needs you: a decision, a sign-in, a key, a review.</Text>
+                  <Text dimColor>Click an option, or type an answer and press Enter. Claude gets it right away, even mid-build.</Text>
+                  <Text dimColor>/flow insights shows your stats · ⚙ sets how often Flow looks ahead.</Text>
+                </Box>
+              ) : null}
             </Box>
           ) : (
             shown.map(drawCard)
